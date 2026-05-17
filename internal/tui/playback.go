@@ -221,6 +221,7 @@ func (a *App) saveSession() {
 		PinArtists:     a.pinArtists,
 		ArtistsCur:     a.artistsPanelCur,
 		LoopTrack:      a.loopTrack,
+		LoopPlaylist:   a.loopPlaylist,
 		LoopCount:      a.loopCount,
 		LoopTotal:      a.loopTotal,
 		Theme:          a.theme.ToMap(),

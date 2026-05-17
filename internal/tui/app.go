@@ -17,6 +17,10 @@ import (
 	"github.com/Sadoaz/vimyt/internal/youtube"
 )
 
+// playerGlobal is the shared player instance used by MPRIS goroutines.
+// Set in New() before the program starts.
+var playerGlobal *player.Player
+
 type panel int
 
 const (
@@ -105,6 +109,7 @@ type App struct {
 	autoplay            bool            // auto-advance to next track on EOF
 	shuffle             bool            // randomize next track selection
 	loopTrack           bool            // loop current track on EOF
+	loopPlaylist        bool            // loop entire playlist on EOF
 	loopCount           int             // remaining loops (0 = infinite)
 	loopTotal           int             // original loop count for display
 	pinSearch           bool            // keep search panel expanded when unfocused
@@ -232,7 +237,7 @@ func checkDeps() string {
 }
 
 // New creates a new App model, restoring previous session state.
-func New(plStore *model.PlaylistStore) App {
+func New(plStore *model.PlaylistStore, p *player.Player) App {
 	ci := textinput.New()
 	ci.Prompt = ":"
 	ci.CharLimit = 10
@@ -348,6 +353,9 @@ func New(plStore *model.PlaylistStore) App {
 	qm.cursor = min(qm.cursor, qdata.Len()-1)
 	qm.cursor = max(qm.cursor, 0)
 
+	// Set the global player reference for MPRIS channel polling before creating app
+	playerGlobal = p
+
 	app := App{
 		search:               sm,
 		queue:                qm,
@@ -355,7 +363,7 @@ func New(plStore *model.PlaylistStore) App {
 		history:              hm,
 		overlay:              newOverlayModel(),
 		qdata:                qdata,
-		player:               player.New(),
+		player:               p,
 		focusedPanel:         v,
 		colonInput:           ci,
 		gotoInput:            gi,
@@ -385,6 +393,7 @@ func New(plStore *model.PlaylistStore) App {
 		showArtistsPanel:     sess.ShowArtists,
 		pinArtists:           sess.PinArtists,
 		loopTrack:            sess.LoopTrack,
+		loopPlaylist:         sess.LoopPlaylist,
 		loopCount:            sess.LoopCount,
 		loopTotal:            sess.LoopTotal,
 		theme:                ThemeFromMap(sess.Theme),
@@ -418,14 +427,89 @@ func New(plStore *model.PlaylistStore) App {
 	return app
 }
 
+// mprisMsg is sent when MPRIS clients trigger next/prev/seek/setpos.
+type mprisMsg struct {
+	Action string // "next", "prev", "stop", "seek:<delta_μs>", "setpos:<pos_μs>"
+}
+
 func (a App) Init() tea.Cmd {
-	cmds := []tea.Cmd{playerTick()}
+	cmds := []tea.Cmd{playerTick(), mprisTick()}
+
 	// Resume playback from last session — load paused and seek (no audio heard)
 	if a.qdata.Current >= 0 && a.qdata.Current < a.qdata.Len() && a.resumePos > 0 {
 		t := &a.qdata.Tracks[a.qdata.Current]
 		a.player.PlayPaused(t, a.resumePos)
 	}
 	return tea.Batch(cmds...)
+}
+
+// mprisTick runs in a background goroutine, polling MPRIS action channels
+// every 100ms. When a message arrives, it returns it to the Bubble Tea event
+// loop. The Update handler then schedules a new mprisTick goroutine.
+func mprisTick() tea.Cmd {
+	return func() tea.Msg {
+		p := playerGlobal
+		for {
+			if p == nil {
+				time.Sleep(100 * time.Millisecond)
+				p = playerGlobal
+				continue
+			}
+			select {
+			case <-p.OnNext():
+				return mprisMsg{Action: "next"}
+			case <-p.OnPrev():
+				return mprisMsg{Action: "prev"}
+			case delta := <-p.OnSeek():
+				return mprisMsg{Action: fmt.Sprintf("seek:%d", delta)}
+			case pos := <-p.OnSetPosition():
+				return mprisMsg{Action: fmt.Sprintf("setpos:%d", pos)}
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}
+}
+
+// handleMPRISNext skips to the next track.
+func (a *App) handleMPRISNext() {
+	if a.qdata.Len() == 0 {
+		return
+	}
+	a.pushPrev()
+	if a.shuffle {
+		idx := a.pickShuffleNext()
+		a.qdata.Current = idx
+		a.playTrack(&a.qdata.Tracks[idx], "queue")
+	} else {
+		t := a.qdata.Next()
+		if t != nil {
+			a.playTrack(t, "queue")
+		} else {
+			a.player.Stop()
+		}
+	}
+}
+
+// handleMPRISPrev plays the previous track in the history stack.
+func (a *App) handleMPRISPrev() {
+	if len(a.prevStack) == 0 {
+		return
+	}
+	idx := a.prevStack[len(a.prevStack)-1]
+	a.prevStack = a.prevStack[:len(a.prevStack)-1]
+	if idx >= 0 && idx < a.qdata.Len() {
+		a.qdata.Current = idx
+		a.player.Play(&a.qdata.Tracks[idx])
+		if a.playHistory != nil {
+			a.playHistory.Add(a.qdata.Tracks[idx], "queue")
+		}
+	}
+}
+
+// handleMPRISSeek seeks by delta microseconds.
+func (a *App) handleMPRISSeek(delta int64) {
+	sec := float64(delta) / 1e6
+	a.player.Seek(sec)
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -436,6 +520,28 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.statusMsg = ""
 		}
 		return a, nil
+
+	case mprisMsg:
+		switch msg.Action {
+		case "next":
+			a.handleMPRISNext()
+		case "prev":
+			a.handleMPRISPrev()
+		case "stop":
+			a.player.Stop()
+		default:
+			if len(msg.Action) > 5 && msg.Action[:5] == "seek:" {
+				var delta int64
+				fmt.Sscanf(msg.Action[5:], "%d", &delta)
+				a.handleMPRISSeek(delta)
+			} else if len(msg.Action) > 7 && msg.Action[:7] == "setpos:" {
+				var pos int64
+				fmt.Sscanf(msg.Action[7:], "%d", &pos)
+				sec := float64(pos) / 1e6
+				a.player.SeekAbsolute(sec)
+			}
+		}
+		return a, mprisTick()
 
 	case playerTickMsg:
 		a.tickCount++
@@ -448,6 +554,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Poll mpv status — Status() queries mpv IPC for real position/state.
 		// The player detects EOF internally and transitions to Stopped.
 		status := a.player.Status()
+
+		// Sync settings controlled via MPRIS (shuffle, loop)
+		a.shuffle = a.player.IsShuffle()
+		a.loopPlaylist = a.player.IsLoopPlaylist()
+		if a.player.IsLoopTrack() != a.loopTrack {
+			a.loopTrack = a.player.IsLoopTrack()
+			a.loopTotal = 0
+			a.loopCount = 0
+		}
 
 		// Auto-advance: if player stopped (track ended).
 		// Loop track takes priority: replay the same track.
@@ -469,7 +584,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.loopCount = a.loopTotal
 					shouldAdvance = true
 				}
-			} else if a.autoplay {
+			} else if a.loopPlaylist || a.autoplay {
 				shouldAdvance = true
 			}
 			if shouldAdvance && a.qdata.Len() > 0 {
@@ -506,7 +621,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.prefetchNextIdx = nextIdx
 				ctx, cancel := context.WithCancel(context.Background())
 				a.prefetchCancel = cancel
-				go youtube.ResolveURLCtx(ctx, nextTrack.ID)
+				go func() { youtube.ResolveURLCtx(ctx, nextTrack.ID) }()
 			}
 		}
 		return a, playerTick()

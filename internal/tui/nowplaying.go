@@ -27,7 +27,7 @@ var (
 
 var npSettingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
 
-func renderNowPlaying(status model.PlayerStatus, width int, favSet map[string]bool, autoplay bool, shuffle bool, loopTrack bool, loopTotal int, tick int) string {
+func renderNowPlaying(status model.PlayerStatus, width int, favSet map[string]bool, autoplay bool, shuffle bool, loopTrack bool, loopPlaylist bool, loopTotal int, tick int) string {
 	if status.Track == nil {
 		line := "  Nothing playing"
 		return nowPlayingStyle.Width(width).MaxWidth(width).Render(line)
@@ -54,6 +54,9 @@ func renderNowPlaying(status model.PlayerStatus, width int, favSet map[string]bo
 		} else {
 			stateStr += npSettingStyle.Render(fmt.Sprintf(" [L%d]", loopTotal))
 		}
+	}
+	if loopPlaylist {
+		stateStr += npSettingStyle.Render(" [LP]")
 	}
 
 	pos := formatDuration(status.Position)
@@ -101,7 +104,7 @@ func renderNowPlaying(status model.PlayerStatus, width int, favSet map[string]bo
 }
 
 // renderInputWithNowPlaying shows a text input on the left and abbreviated now-playing on the right.
-func renderInputWithNowPlaying(inputView string, status model.PlayerStatus, width int, autoplay bool, shuffle bool, loopTrack bool, loopTotal int) string {
+func renderInputWithNowPlaying(inputView string, status model.PlayerStatus, width int, autoplay bool, shuffle bool, loopTrack bool, loopPlaylist bool, loopTotal int) string {
 	if status.Track == nil {
 		// No track — just show the input full-width
 		return nowPlayingStyle.Width(width).MaxWidth(width).Render(inputView)
@@ -126,6 +129,9 @@ func renderInputWithNowPlaying(inputView string, status model.PlayerStatus, widt
 		} else {
 			stateIcons += npSettingStyle.Render(fmt.Sprintf(" [L%d]", loopTotal))
 		}
+	}
+	if loopPlaylist {
+		stateIcons += npSettingStyle.Render(" [LP]")
 	}
 
 	inputW := lipgloss.Width(inputView)

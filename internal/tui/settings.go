@@ -21,18 +21,19 @@ var settingsOptions = []struct {
 	{"Autoplay", "Auto-advance to next track when current ends"},        // 0
 	{"Shuffle", "Randomize next track selection"},                       // 1
 	{"Loop Track", "Replay current track (∞ or x times)"},               // 2
-	{"Focus Queue", "Auto-focus queue panel when playing a track"},      // 3
-	{"Rel Numbers", "Show relative line numbers (vim-style)"},           // 4
-	{"Pin Search", "Keep search panel expanded when unfocused"},         // 5
-	{"Pin Playlist", "Keep playlist detail expanded when unfocused"},    // 6
-	{"Pin Radio", "Keep radio history expanded when unfocused"},         // 7
-	{"Pin Artists", "Keep artists panel expanded when unfocused"},       // 8
-	{"Show History", "Show play history panel below playlists"},         // 9
-	{"Show Radio", "Show radio history panel below play history"},       // 10
-	{"Show Artists", "Show artists panel"},                              // 11
-	{"Colors", "Customize TUI colors"},                                  // 12
-	{"YT Auth", "Use browser cookies to access your private playlists"}, // 13
-	{"Import", "Import playlist from YouTube URL"},                      // 14
+	{"Loop Playlist", "Loop entire playlist"},                           // 3
+	{"Focus Queue", "Auto-focus queue panel when playing a track"},      // 4
+	{"Rel Numbers", "Show relative line numbers (vim-style)"},           // 5
+	{"Pin Search", "Keep search panel expanded when unfocused"},         // 6
+	{"Pin Playlist", "Keep playlist detail expanded when unfocused"},    // 7
+	{"Pin Radio", "Keep radio history expanded when unfocused"},         // 8
+	{"Pin Artists", "Keep artists panel expanded when unfocused"},       // 9
+	{"Show History", "Show play history panel below playlists"},         // 10
+	{"Show Radio", "Show radio history panel below play history"},       // 11
+	{"Show Artists", "Show artists panel"},                              // 12
+	{"Colors", "Customize TUI colors"},                                  // 13
+	{"YT Auth", "Use browser cookies to access your private playlists"}, // 14
+	{"Import", "Import playlist from YouTube URL"},                      // 15
 }
 
 // browserOptions is the cycle for the Auth Browser setting.
@@ -47,26 +48,28 @@ func (a *App) settingValue(idx int) bool {
 	case 2:
 		return a.loopTrack
 	case 3:
-		return a.autoFocusQueue
+		return a.loopPlaylist
 	case 4:
-		return a.relNumbers
+		return a.autoFocusQueue
 	case 5:
-		return a.pinSearch
+		return a.relNumbers
 	case 6:
-		return a.pinPlaylist
+		return a.pinSearch
 	case 7:
-		return a.pinRadio
+		return a.pinPlaylist
 	case 8:
-		return a.pinArtists
+		return a.pinRadio
 	case 9:
-		return a.showHistory
+		return a.pinArtists
 	case 10:
-		return a.showRadio
+		return a.showHistory
 	case 11:
-		return a.showArtistsPanel
+		return a.showRadio
 	case 12:
-		return false // Colors — not a boolean toggle
+		return a.showArtistsPanel
 	case 13:
+		return false // Colors — not a boolean toggle
+	case 14:
 		return a.cookieBrowser != ""
 	}
 	return false
@@ -81,12 +84,15 @@ func (a *App) toggleSetting(idx int) {
 		if !a.shuffle {
 			a.shufflePlayed = nil
 		}
+		a.player.SetShuffle(a.shuffle)
 	case 2:
 		// Loop Track: cycle Off → ∞ → input mode
 		if !a.loopTrack {
 			a.loopTrack = true
 			a.loopCount = 0
 			a.loopTotal = 0
+			a.loopPlaylist = false
+			a.player.SetLoopPlaylist(false)
 		} else if a.loopTotal == 0 {
 			a.settingsLoopInput = true
 			a.settingsLoopInp.SetValue("")
@@ -96,44 +102,55 @@ func (a *App) toggleSetting(idx int) {
 			a.loopCount = 0
 			a.loopTotal = 0
 		}
+		a.player.SetLoopTrack(a.loopTrack)
 	case 3:
-		a.autoFocusQueue = !a.autoFocusQueue
+		a.loopPlaylist = !a.loopPlaylist
+		a.player.SetLoopPlaylist(a.loopPlaylist)
+		if a.loopPlaylist {
+			a.loopTrack = false
+			a.player.SetLoopTrack(false)
+		}
 	case 4:
-		a.relNumbers = !a.relNumbers
+		a.autoFocusQueue = !a.autoFocusQueue
 	case 5:
-		a.pinSearch = !a.pinSearch
+		a.relNumbers = !a.relNumbers
 	case 6:
-		a.pinPlaylist = !a.pinPlaylist
+		a.pinSearch = !a.pinSearch
 	case 7:
-		a.pinRadio = !a.pinRadio
+		a.pinPlaylist = !a.pinPlaylist
 	case 8:
-		a.pinArtists = !a.pinArtists
+		a.pinRadio = !a.pinRadio
 	case 9:
+		a.pinArtists = !a.pinArtists
+	case 10:
 		a.showHistory = !a.showHistory
 		if !a.showHistory && a.focusedPanel == panelHistory {
 			a.focusedPanel = panelPlaylist
 		}
-	case 10:
+	case 11:
 		a.showRadio = !a.showRadio
 		if !a.showRadio && a.focusedPanel == panelRadioHist {
 			a.focusedPanel = panelPlaylist
 		}
-	case 11:
+	case 12:
 		a.showArtistsPanel = !a.showArtistsPanel
 		if !a.showArtistsPanel && a.focusedPanel == panelArtists {
 			a.focusedPanel = panelPlaylist
 		}
-	case 12:
-		// Colors — opens color editor, handled in updateSettings
 	case 13:
+		// Colors — opens color editor, handled in updateSettings
+	case 14:
 		a.cycleBrowser(1)
 	}
 }
 
 func (a *App) loopOff() {
 	a.loopTrack = false
+	a.loopPlaylist = false
 	a.loopCount = 0
 	a.loopTotal = 0
+	a.player.SetLoopTrack(false)
+	a.player.SetLoopPlaylist(false)
 }
 
 func (a *App) cycleBrowser(dir int) {

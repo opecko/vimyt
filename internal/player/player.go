@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strconv"
 	"sync"
 	"time"
 
@@ -19,25 +18,31 @@ import (
 
 // Player controls mpv via JSON IPC over a Unix socket.
 type Player struct {
-	mu        sync.Mutex
-	cmd       *exec.Cmd
-	conn      net.Conn
-	socket    string
-	state     model.PlayerState
-	track     *model.Track
-	pos       time.Duration
-	dur       time.Duration
-	volume    int
-	wasPlay   bool // was playing before current status poll (for end detection)
-	errMsg    string
-	resolving bool   // true while resolving audio URL
-	gen       uint64 // generation counter — incremented on each Play/PlayPaused call
-	resuming  bool   // true during PlayPaused resume — prevents Status() from overriding pause state
-	// Debounce: when Play() is called rapidly (e.g. spamming n/N),
-	// we delay the yt-dlp resolve so only the last skip actually hits YouTube.
+	mu            sync.Mutex
+	cmd           *exec.Cmd
+	conn          net.Conn
+	socket        string
+	state         model.PlayerState
+	track         *model.Track
+	pos           time.Duration
+	dur           time.Duration
+	volume        int
+	wasPlay       bool // was playing before current status poll (for end detection)
+	errMsg        string
+	resolving     bool // true while resolving audio URL
+	gen           uint64
+	resuming      bool // true during PlayPaused resume — prevents Status() from overriding pause state
+	shuffle       bool // shuffle mode enabled
+	loopTrack     bool // loop current track enabled
+	loopPlaylist  bool // loop entire playlist enabled
 	debounceTimer *time.Timer
-	// resolveCancel cancels any in-flight yt-dlp URL resolution, killing the process.
 	resolveCancel context.CancelFunc
+
+	// MPRIS action channels — allow external control (e.g., from DBus)
+	onNext   chan struct{}
+	onPrev   chan struct{}
+	onSeek   chan int64 // position delta in microseconds
+	onSetPos chan int64 // absolute position in microseconds
 }
 
 // ipcResponse is the JSON structure from mpv IPC.
@@ -51,8 +56,12 @@ type ipcResponse struct {
 // New creates a player backed by an mpv subprocess.
 func New() *Player {
 	p := &Player{
-		state:  model.Stopped,
-		volume: 50,
+		state:    model.Stopped,
+		volume:   50,
+		onNext:   make(chan struct{}, 1),
+		onPrev:   make(chan struct{}, 1),
+		onSeek:   make(chan int64, 1),
+		onSetPos: make(chan int64, 1),
 	}
 
 	if _, err := exec.LookPath("mpv"); err != nil {
@@ -152,6 +161,15 @@ func (p *Player) Play(t *model.Track) {
 	p.mu.Lock()
 	p.gen++ // invalidate any in-flight goroutines from previous Play calls
 	myGen := p.gen
+
+	// If same track is already loaded, just unpause (don't restart)
+	if p.conn != nil && p.track != nil && p.track.ID == t.ID {
+		p.state = model.Playing
+		p.sendCommand("set_property", "pause", false)
+		p.mu.Unlock()
+		return
+	}
+
 	p.track = t
 	p.pos = 0
 	p.dur = t.Duration
@@ -185,7 +203,7 @@ func (p *Player) Play(t *model.Track) {
 // Called after the debounce timer fires. The context allows cancellation
 // when the user skips to another track before resolution completes.
 func (p *Player) resolveAndLoad(ctx context.Context, t *model.Track, myGen uint64) {
-	url, err := youtube.ResolveURLCtx(ctx, t.ID)
+	url, thumb, err := youtube.ResolveURLCtx(ctx, t.ID)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -208,6 +226,10 @@ func (p *Player) resolveAndLoad(ctx context.Context, t *model.Track, myGen uint6
 		return
 	}
 
+	if thumb != "" {
+		t.ThumbnailURL = thumb
+	}
+
 	if p.conn == nil {
 		return
 	}
@@ -220,7 +242,7 @@ func (p *Player) resolveAndLoad(ctx context.Context, t *model.Track, myGen uint6
 	if loadErr != nil {
 		// Maybe expired cached URL — retry once
 		youtube.InvalidateURL(t.ID)
-		url2, err2 := youtube.ResolveURLCtx(ctx, t.ID)
+		url2, _, err2 := youtube.ResolveURLCtx(ctx, t.ID)
 		if err2 != nil {
 			if ctx.Err() != nil {
 				return
@@ -263,7 +285,7 @@ func (p *Player) PlayPaused(t *model.Track, seekPos float64) {
 	p.mu.Unlock()
 
 	go func() {
-		url, err := youtube.ResolveURLCtx(ctx, t.ID)
+		url, thumb, err := youtube.ResolveURLCtx(ctx, t.ID)
 
 		p.mu.Lock()
 		if p.gen != myGen {
@@ -284,6 +306,10 @@ func (p *Player) PlayPaused(t *model.Track, seekPos float64) {
 			return
 		}
 
+		if thumb != "" {
+			t.ThumbnailURL = thumb
+		}
+
 		if p.conn == nil {
 			p.mu.Unlock()
 			return
@@ -297,7 +323,7 @@ func (p *Player) PlayPaused(t *model.Track, seekPos float64) {
 		_, loadErr := p.sendCommand("loadfile", url)
 		if loadErr != nil {
 			youtube.InvalidateURL(t.ID)
-			url2, err2 := youtube.ResolveURLCtx(ctx, t.ID)
+			url2, _, err2 := youtube.ResolveURLCtx(ctx, t.ID)
 			if err2 != nil {
 				if ctx.Err() != nil {
 					p.mu.Unlock()
@@ -370,7 +396,7 @@ func (p *Player) Stop() {
 }
 
 // Seek adjusts position by delta seconds.
-func (p *Player) Seek(deltaSec int) {
+func (p *Player) Seek(deltaSec float64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -378,7 +404,7 @@ func (p *Player) Seek(deltaSec int) {
 		return
 	}
 
-	p.sendCommand("seek", strconv.Itoa(deltaSec), "relative")
+	p.sendCommand("seek", fmt.Sprintf("%.6f", deltaSec), "relative")
 }
 
 // SeekAbsolute seeks to an absolute position in seconds.
@@ -488,6 +514,60 @@ func (p *Player) SetVolume(v int) {
 		p.sendCommand("set_property", "volume", v)
 	}
 }
+
+// SetShuffle enables or disables shuffle mode.
+func (p *Player) SetShuffle(on bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.shuffle = on
+}
+
+// IsShuffle returns whether shuffle mode is enabled.
+func (p *Player) IsShuffle() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.shuffle
+}
+
+// SetLoopTrack enables or disables track looping.
+func (p *Player) SetLoopTrack(on bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.loopTrack = on
+}
+
+// IsLoopTrack returns whether track looping is enabled.
+func (p *Player) IsLoopTrack() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.loopTrack
+}
+
+// SetLoopPlaylist enables or disables playlist looping.
+func (p *Player) SetLoopPlaylist(on bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.loopPlaylist = on
+}
+
+// IsLoopPlaylist returns whether playlist looping is enabled.
+func (p *Player) IsLoopPlaylist() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.loopPlaylist
+}
+
+// OnNext returns the Next action channel.
+func (p *Player) OnNext() chan struct{} { return p.onNext }
+
+// OnPrev returns the Previous action channel.
+func (p *Player) OnPrev() chan struct{} { return p.onPrev }
+
+// OnSeek returns the Seek action channel.
+func (p *Player) OnSeek() chan int64 { return p.onSeek }
+
+// OnSetPosition returns the SetPosition action channel (absolute microseconds).
+func (p *Player) OnSetPosition() chan int64 { return p.onSetPos }
 
 // ErrMsg returns any error message from initialization.
 func (p *Player) ErrMsg() string {
