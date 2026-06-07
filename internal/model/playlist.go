@@ -77,6 +77,9 @@ func loadPlaylist(path string) (*Playlist, error) {
 	if err := json.Unmarshal(data, &p); err != nil {
 		return nil, err
 	}
+	for i := range p.Tracks {
+		p.Tracks[i] = SanitizeTrack(p.Tracks[i])
+	}
 	p.path = path
 	return &p, nil
 }
@@ -127,6 +130,7 @@ func (p *Playlist) AddTracks(tracks ...Track) error {
 		existing[t.ID] = true
 	}
 	for _, t := range tracks {
+		t = SanitizeTrack(t)
 		if !existing[t.ID] {
 			p.Tracks = append(p.Tracks, t)
 			existing[t.ID] = true

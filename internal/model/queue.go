@@ -39,6 +39,9 @@ func NewQueue() *Queue {
 
 // Add appends tracks to the end of the queue.
 func (q *Queue) Add(tracks ...Track) {
+	for i := range tracks {
+		tracks[i] = SanitizeTrack(tracks[i])
+	}
 	q.Tracks = append(q.Tracks, tracks...)
 }
 
@@ -189,6 +192,9 @@ func (q *Queue) InsertAfter(i int, tracks ...Track) {
 	if len(tracks) == 0 {
 		return
 	}
+	for i := range tracks {
+		tracks[i] = SanitizeTrack(tracks[i])
+	}
 	insertIdx := i + 1
 	insertIdx = min(insertIdx, len(q.Tracks))
 	insertIdx = max(insertIdx, 0)
@@ -264,12 +270,12 @@ func LoadQueue() *Queue {
 	}
 	q := NewQueue()
 	for _, st := range sq.Tracks {
-		q.Tracks = append(q.Tracks, Track{
+		q.Tracks = append(q.Tracks, SanitizeTrack(Track{
 			ID:       st.ID,
 			Title:    st.Title,
 			Artist:   st.Artist,
 			Duration: time.Duration(st.Duration) * time.Millisecond,
-		})
+		}))
 	}
 	q.Current = sq.Current
 	q.Current = min(q.Current, len(q.Tracks)-1)

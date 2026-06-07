@@ -37,11 +37,36 @@ func LoadRadioHistory() *RadioHistory {
 		return h
 	}
 	_ = json.Unmarshal(data, h)
+	changed := false
+	for i := range h.Entries {
+		seedTitle := SanitizeText(h.Entries[i].SeedTitle)
+		seedArtist := SanitizeText(h.Entries[i].SeedArtist)
+		if seedTitle != h.Entries[i].SeedTitle || seedArtist != h.Entries[i].SeedArtist {
+			h.Entries[i].SeedTitle = seedTitle
+			h.Entries[i].SeedArtist = seedArtist
+			changed = true
+		}
+		for j := range h.Entries[i].Tracks {
+			sanitized := SanitizeTrack(h.Entries[i].Tracks[j])
+			if sanitized != h.Entries[i].Tracks[j] {
+				h.Entries[i].Tracks[j] = sanitized
+				changed = true
+			}
+		}
+	}
+	if changed {
+		h.Save()
+	}
 	return h
 }
 
 // Add records a new radio mix entry and persists to disk.
 func (h *RadioHistory) Add(seedTitle, seedArtist string, trackCount int, tracks []Track) {
+	seedTitle = SanitizeText(seedTitle)
+	seedArtist = SanitizeText(seedArtist)
+	for i := range tracks {
+		tracks[i] = SanitizeTrack(tracks[i])
+	}
 	entry := RadioHistoryEntry{
 		SeedTitle:  seedTitle,
 		SeedArtist: seedArtist,
