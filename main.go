@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -19,11 +20,13 @@ func main() {
 		log.Printf("player: %s", msg)
 	}
 
-	m, err := mpris.New(p)
-	if err != nil {
-		log.Printf("mpris: %v", err)
-	} else {
-		defer m.Close()
+	if runtime.GOOS == "linux" {
+		m, err := mpris.New(p)
+		if err != nil {
+			log.Printf("mpris: %v", err)
+		} else {
+			defer m.Close()
+		}
 	}
 
 	plStore, err := model.NewPlaylistStore()
