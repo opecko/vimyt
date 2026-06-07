@@ -105,6 +105,7 @@ type App struct {
 	autoplay            bool  // auto-advance to next track on EOF
 	shuffle             bool  // randomize next track selection
 	loopTrack           bool  // loop current track on EOF
+	loopPlaylist        bool  // loop entire playlist on EOF
 	loopCount           int   // remaining loops (0 = infinite)
 	loopTotal           int   // original loop count for display
 	pinSearch           bool  // keep search panel expanded when unfocused
@@ -242,7 +243,7 @@ func checkDeps() string {
 }
 
 // New creates a new App model, restoring previous session state.
-func New(plStore *model.PlaylistStore) App {
+func New(plStore *model.PlaylistStore, p *player.Player) App {
 	ci := textinput.New()
 	ci.Prompt = ":"
 	ci.CharLimit = 10
@@ -365,7 +366,7 @@ func New(plStore *model.PlaylistStore) App {
 		history:              hm,
 		overlay:              newOverlayModel(),
 		qdata:                qdata,
-		player:               player.New(),
+		player:               p,
 		focusedPanel:         v,
 		colonInput:           ci,
 		gotoInput:            gi,
@@ -396,6 +397,7 @@ func New(plStore *model.PlaylistStore) App {
 		showArtistsPanel:     sess.ShowArtists,
 		pinArtists:           sess.PinArtists,
 		loopTrack:            sess.LoopTrack,
+		loopPlaylist:         sess.LoopPlaylist,
 		loopCount:            sess.LoopCount,
 		loopTotal:            sess.LoopTotal,
 		theme:                ThemeFromMap(sess.Theme),
@@ -407,6 +409,9 @@ func New(plStore *model.PlaylistStore) App {
 	if sess.Volume > 0 {
 		app.player.SetVolume(sess.Volume)
 	}
+	app.player.SetShuffle(app.shuffle)
+	app.player.SetLoopTrack(app.loopTrack)
+	app.player.SetLoopPlaylist(app.loopPlaylist)
 	// Restore radio history cursor
 	app.radioHistCur = sess.RadioHistCur
 	rhVisible, _ := app.radioHistVisible()
@@ -433,14 +438,97 @@ func New(plStore *model.PlaylistStore) App {
 	return app
 }
 
+type mprisAction int
+
+const (
+	mprisNext mprisAction = iota
+	mprisPrev
+	mprisStop
+	mprisSeek
+	mprisSetPosition
+)
+
+type mprisMsg struct {
+	Action mprisAction
+	Value  int64
+}
+
 func (a App) Init() tea.Cmd {
-	cmds := []tea.Cmd{playerTick()}
+	cmds := []tea.Cmd{playerTick(), mprisTick(a.player)}
+
 	// Resume playback from last session — load paused and seek (no audio heard)
 	if a.qdata.Current >= 0 && a.qdata.Current < a.qdata.Len() && a.resumePos > 0 {
 		t := &a.qdata.Tracks[a.qdata.Current]
 		a.player.PlayPaused(t, a.resumePos)
 	}
 	return tea.Batch(cmds...)
+}
+
+// mprisTick runs in a background goroutine, polling MPRIS action channels
+// every 100ms. When a message arrives, it returns it to the Bubble Tea event
+// loop. The Update handler then schedules a new mprisTick goroutine.
+func mprisTick(p *player.Player) tea.Cmd {
+	return func() tea.Msg {
+		for {
+			if p == nil {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			select {
+			case <-p.OnNext():
+				return mprisMsg{Action: mprisNext}
+			case <-p.OnPrev():
+				return mprisMsg{Action: mprisPrev}
+			case delta := <-p.OnSeek():
+				return mprisMsg{Action: mprisSeek, Value: delta}
+			case pos := <-p.OnSetPosition():
+				return mprisMsg{Action: mprisSetPosition, Value: pos}
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
+	}
+}
+
+// handleMPRISNext skips to the next track.
+func (a *App) handleMPRISNext() {
+	if a.qdata.Len() == 0 {
+		return
+	}
+	a.pushPrev()
+	if a.shuffle {
+		idx := a.pickShuffleNext()
+		a.qdata.Current = idx
+		a.playTrack(&a.qdata.Tracks[idx], "queue")
+	} else {
+		t := a.qdata.Next()
+		if t != nil {
+			a.playTrack(t, "queue")
+		} else {
+			a.player.Stop()
+		}
+	}
+}
+
+// handleMPRISPrev plays the previous track in the history stack.
+func (a *App) handleMPRISPrev() {
+	if len(a.prevStack) == 0 {
+		return
+	}
+	idx := a.prevStack[len(a.prevStack)-1]
+	a.prevStack = a.prevStack[:len(a.prevStack)-1]
+	if idx >= 0 && idx < a.qdata.Len() {
+		a.qdata.Current = idx
+		a.player.Play(&a.qdata.Tracks[idx])
+		if a.playHistory != nil {
+			a.playHistory.Add(a.qdata.Tracks[idx], "queue")
+		}
+	}
+}
+
+// handleMPRISSeek seeks by delta microseconds.
+func (a *App) handleMPRISSeek(delta int64) {
+	sec := float64(delta) / 1e6
+	a.player.Seek(sec)
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -451,6 +539,21 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.statusMsg = ""
 		}
 		return a, nil
+
+	case mprisMsg:
+		switch msg.Action {
+		case mprisNext:
+			a.handleMPRISNext()
+		case mprisPrev:
+			a.handleMPRISPrev()
+		case mprisStop:
+			a.player.Stop()
+		case mprisSeek:
+			a.handleMPRISSeek(msg.Value)
+		case mprisSetPosition:
+			a.player.SeekAbsolute(float64(msg.Value) / 1e6)
+		}
+		return a, mprisTick(a.player)
 
 	case playerTickMsg:
 		a.tickCount++
@@ -464,6 +567,17 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The player detects EOF internally and transitions to Stopped.
 		status := a.player.Status()
 
+		if a.player.IsShuffle() != a.shuffle {
+			a.shuffle = a.player.IsShuffle()
+		}
+		if a.player.IsLoopPlaylist() != a.loopPlaylist {
+			a.loopPlaylist = a.player.IsLoopPlaylist()
+		}
+		if a.player.IsLoopTrack() != a.loopTrack {
+			a.loopTrack = a.player.IsLoopTrack()
+			a.loopTotal = 0
+			a.loopCount = 0
+		}
 		a.honourForeignClaim()
 		a.publishLocalClaim(status)
 
@@ -487,7 +601,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.loopCount = a.loopTotal
 					shouldAdvance = true
 				}
-			} else if a.autoplay {
+			} else if a.loopPlaylist || a.autoplay {
 				shouldAdvance = true
 			}
 			if shouldAdvance && a.qdata.Len() > 0 {
@@ -524,7 +638,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.prefetchNextIdx = nextIdx
 				ctx, cancel := context.WithCancel(context.Background())
 				a.prefetchCancel = cancel
-				go youtube.ResolveURLCtx(ctx, nextTrack.ID)
+				go func() { youtube.ResolveURLCtx(ctx, nextTrack.ID) }()
 			}
 		}
 		return a, playerTick()

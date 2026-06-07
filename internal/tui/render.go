@@ -127,9 +127,9 @@ func (a App) View() string {
 	// Bottom bar
 	var bottomBar string
 	if a.gotoActive {
-		bottomBar = renderInputWithNowPlaying(a.gotoInput.View(), a.player.Status(), a.width, a.autoplay, a.shuffle, a.loopTrack, a.loopTotal)
+		bottomBar = renderInputWithNowPlaying(a.gotoInput.View(), a.player.Status(), a.width, a.autoplay, a.shuffle, a.loopTrack, a.loopPlaylist, a.loopTotal)
 	} else if a.colonActive {
-		bottomBar = renderInputWithNowPlaying(a.colonInput.View(), a.player.Status(), a.width, a.autoplay, a.shuffle, a.loopTrack, a.loopTotal)
+		bottomBar = renderInputWithNowPlaying(a.colonInput.View(), a.player.Status(), a.width, a.autoplay, a.shuffle, a.loopTrack, a.loopPlaylist, a.loopTotal)
 	} else if a.playlist.isFilterActive() {
 		bottomBar = "/" + a.playlist.input.View()
 	} else if a.queue.isFilterActive() {
@@ -149,7 +149,7 @@ func (a App) View() string {
 	} else if a.foreignClaim != nil {
 		bottomBar = renderRemoteNowPlaying(a.foreignClaim, a.width)
 	} else {
-		bottomBar = renderNowPlaying(a.player.Status(), a.width, favSet, a.autoplay, a.shuffle, a.loopTrack, a.loopTotal, a.tickCount)
+		bottomBar = renderNowPlaying(a.player.Status(), a.width, favSet, a.autoplay, a.shuffle, a.loopTrack, a.loopPlaylist, a.loopTotal, a.tickCount)
 	}
 
 	// Content area height = total height minus bottom bar (1)

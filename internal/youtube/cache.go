@@ -49,8 +49,9 @@ const urlTTL = 4 * time.Hour
 const maxURLCacheSize = 200
 
 type urlEntry struct {
-	url      string
-	cachedAt time.Time
+	url       string
+	thumbnail string
+	cachedAt  time.Time
 }
 
 // URLCache caches resolved audio stream URLs by YouTube video ID.
@@ -75,11 +76,25 @@ func (c *URLCache) Get(id string) string {
 	return e.url
 }
 
-// Set stores an audio URL for a video ID with the current timestamp.
-func (c *URLCache) Set(id, url string) {
+// GetThumbnail returns the cached thumbnail URL for a video ID, or empty string if not cached or expired.
+func (c *URLCache) GetThumbnail(id string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e, ok := c.entries[id]
+	if !ok {
+		return ""
+	}
+	if time.Since(e.cachedAt) > urlTTL {
+		return ""
+	}
+	return e.thumbnail
+}
+
+// Set stores an audio URL and thumbnail URL for a video ID with the current timestamp.
+func (c *URLCache) Set(id, url, thumbnail string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.entries[id] = urlEntry{url: url, cachedAt: time.Now()}
+	c.entries[id] = urlEntry{url: url, thumbnail: thumbnail, cachedAt: time.Now()}
 	// Evict expired entries if cache is getting large
 	if len(c.entries) > maxURLCacheSize {
 		now := time.Now()
@@ -98,25 +113,26 @@ func (c *URLCache) Invalidate(id string) {
 	delete(c.entries, id)
 }
 
-// ResolveURL returns the audio stream URL for a YouTube video ID.
+// ResolveURL returns the audio stream URL and thumbnail URL for a YouTube video ID.
 // Checks cache first, falls back to yt-dlp subprocess.
-func ResolveURL(id string) (string, error) {
+func ResolveURL(id string) (url, thumbnail string, err error) {
 	return ResolveURLCtx(context.Background(), id)
 }
 
 // ResolveURLCtx is like ResolveURL but accepts a context for cancellation.
 // When the context is cancelled, any in-flight yt-dlp process is killed.
-func ResolveURLCtx(ctx context.Context, id string) (string, error) {
-	if url := urlCache.Get(id); url != "" {
-		return url, nil
+// Returns the audio stream URL and the thumbnail URL.
+func ResolveURLCtx(ctx context.Context, id string) (url, thumbnail string, err error) {
+	if u := urlCache.Get(id); u != "" {
+		return u, urlCache.GetThumbnail(id), nil
 	}
 
-	url, err := fetchAudioURL(ctx, id)
+	url, thumbnail, err = fetchAudioURL(ctx, id)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	urlCache.Set(id, url)
-	return url, nil
+	urlCache.Set(id, url, thumbnail)
+	return url, thumbnail, nil
 }
 
 // InvalidateURL removes a cached URL so next ResolveURL re-fetches.
@@ -124,7 +140,7 @@ func InvalidateURL(id string) {
 	urlCache.Invalidate(id)
 }
 
-func fetchAudioURL(parent context.Context, id string) (string, error) {
+func fetchAudioURL(parent context.Context, id string) (url, thumbnail string, err error) {
 	// Try formats in order: bestaudio, bestaudio*, best (fallback for videos without separate audio).
 	// Format availability doesn't depend on cookies, so we try all formats with the
 	// current cookie config first. Only if every format fails AND cookies are enabled
@@ -135,33 +151,34 @@ func fetchAudioURL(parent context.Context, id string) (string, error) {
 
 	var lastErr error
 	for _, f := range formats {
-		if url, err := tryResolve(parent, id, f, cookies); err == nil {
-			return url, nil
+		if u, t, e := tryResolve(parent, id, f, cookies); e == nil {
+			return u, t, nil
 		} else {
-			lastErr = err
+			lastErr = e
 		}
 	}
 
 	// If cookies were enabled and all formats failed, retry primary format
 	// without cookies in case the cookie auth itself is the problem.
 	if len(cookies) > 0 {
-		if url, err := tryResolve(parent, id, "bestaudio", nil); err == nil {
-			return url, nil
+		if u, t, e := tryResolve(parent, id, "bestaudio", nil); e == nil {
+			return u, t, nil
 		} else {
-			lastErr = err
+			lastErr = e
 		}
 	}
 
-	return "", lastErr
+	return "", "", lastErr
 }
 
-// tryResolve attempts a single yt-dlp --get-url call for the given format and cookie config.
-func tryResolve(parent context.Context, id, format string, cookies []string) (string, error) {
+// tryResolve attempts a single yt-dlp call for the given format and cookie config.
+// Returns the audio stream URL and an optional thumbnail URL.
+func tryResolve(parent context.Context, id, format string, cookies []string) (url, thumbnail string, err error) {
 	if err := parent.Err(); err != nil {
-		return "", fmt.Errorf("cancelled: %w", err)
+		return "", "", fmt.Errorf("cancelled: %w", err)
 	}
 
-	args := []string{"-f", format, "--get-url", id, "--no-warnings", "--extractor-retries", "3"}
+	args := []string{"-f", format, "--print", "%(url)s\t%(thumbnail)s", "--no-warnings", "--extractor-retries", "3", id}
 	args = append(args, cookies...)
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
@@ -173,12 +190,17 @@ func tryResolve(parent context.Context, id, format string, cookies []string) (st
 
 	if err := cmd.Run(); err != nil {
 		errMsg := strings.TrimSpace(stderr.String())
-		return "", fmt.Errorf("yt-dlp get-url failed for %s (format %s): %w (%s)", id, format, err, errMsg)
+		return "", "", fmt.Errorf("yt-dlp resolve failed for %s (format %s): %w (%s)", id, format, err, errMsg)
 	}
 
-	url := strings.TrimSpace(stdout.String())
-	if url == "" {
-		return "", fmt.Errorf("yt-dlp returned empty URL for %s (format %s)", id, format)
+	line := strings.TrimSpace(stdout.String())
+	if line == "" {
+		return "", "", fmt.Errorf("yt-dlp returned empty URL for %s (format %s)", id, format)
 	}
-	return url, nil
+	fields := strings.SplitN(line, "\t", 2)
+	url = strings.TrimSpace(fields[0])
+	if len(fields) > 1 {
+		thumbnail = strings.TrimSpace(fields[1])
+	}
+	return url, thumbnail, nil
 }

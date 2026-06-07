@@ -28,10 +28,11 @@ var (
 
 // ytdlpResult is the JSON structure from yt-dlp --flat-playlist --dump-json.
 type ytdlpResult struct {
-	ID       string  `json:"id"`
-	Title    string  `json:"title"`
-	Channel  string  `json:"channel"`
-	Duration float64 `json:"duration"`
+	ID        string  `json:"id"`
+	Title     string  `json:"title"`
+	Channel   string  `json:"channel"`
+	Duration  float64 `json:"duration"`
+	Thumbnail string  `json:"thumbnail"`
 }
 
 // Search queries YouTube via yt-dlp and returns up to 20 results.
@@ -90,10 +91,11 @@ func Search(query string) ([]model.Track, error) {
 		dur := time.Duration(r.Duration * float64(time.Second))
 
 		tracks = append(tracks, model.SanitizeTrack(model.Track{
-			ID:       r.ID,
-			Title:    title,
-			Artist:   artist,
-			Duration: dur,
+			ID:           r.ID,
+			Title:        title,
+			Artist:       artist,
+			Duration:     dur,
+			ThumbnailURL: r.Thumbnail,
 		}))
 	}
 
@@ -264,10 +266,11 @@ func fetchRadioPlaylist(videoID string) []model.Track {
 		dur := time.Duration(r.Duration * float64(time.Second))
 
 		pool = append(pool, model.SanitizeTrack(model.Track{
-			ID:       r.ID,
-			Title:    title,
-			Artist:   artist,
-			Duration: dur,
+			ID:           r.ID,
+			Title:        title,
+			Artist:       artist,
+			Duration:     dur,
+			ThumbnailURL: r.Thumbnail,
 		}))
 	}
 
@@ -277,11 +280,12 @@ func fetchRadioPlaylist(videoID string) []model.Track {
 
 // ytdlpPlaylistResult extends ytdlpResult with playlist-level metadata.
 type ytdlpPlaylistResult struct {
-	ID       string  `json:"id"`
-	Title    string  `json:"title"`
-	Channel  string  `json:"channel"`
-	Duration float64 `json:"duration"`
-	Playlist string  `json:"playlist_title"`
+	ID        string  `json:"id"`
+	Title     string  `json:"title"`
+	Channel   string  `json:"channel"`
+	Duration  float64 `json:"duration"`
+	Thumbnail string  `json:"thumbnail"`
+	Playlist  string  `json:"playlist_title"`
 }
 
 // FetchDescription fetches the video description via yt-dlp.
@@ -362,10 +366,11 @@ func FetchPlaylist(url string) (string, []model.Track, error) {
 		dur := time.Duration(r.Duration * float64(time.Second))
 
 		tracks = append(tracks, model.SanitizeTrack(model.Track{
-			ID:       r.ID,
-			Title:    title,
-			Artist:   artist,
-			Duration: dur,
+			ID:           r.ID,
+			Title:        title,
+			Artist:       artist,
+			Duration:     dur,
+			ThumbnailURL: r.Thumbnail,
 		}))
 	}
 

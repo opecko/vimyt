@@ -46,6 +46,7 @@ type Session struct {
 	PinArtists        bool              `json:"pin_artists"`     // keep artists expanded when unfocused
 	ArtistsCur        int               `json:"artists_cur"`     // cursor in artists panel
 	LoopTrack         bool              `json:"loop_track"`      // loop current track on EOF
+	LoopPlaylist      bool              `json:"loop_playlist"`   // loop entire playlist on EOF
 	LoopCount         int               `json:"loop_count"`      // remaining loops (0 = infinite)
 	LoopTotal         int               `json:"loop_total"`      // original loop count for display
 	Theme             map[string]string `json:"theme,omitempty"` // custom color theme overrides
