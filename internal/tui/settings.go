@@ -22,17 +22,18 @@ var settingsOptions = []struct {
 	{"Shuffle", "Randomize next track selection"},                       // 1
 	{"Loop Track", "Replay current track (∞ or x times)"},               // 2
 	{"Focus Queue", "Auto-focus queue panel when playing a track"},      // 3
-	{"Rel Numbers", "Show relative line numbers (vim-style)"},           // 4
-	{"Pin Search", "Keep search panel expanded when unfocused"},         // 5
-	{"Pin Playlist", "Keep playlist detail expanded when unfocused"},    // 6
-	{"Pin Radio", "Keep radio history expanded when unfocused"},         // 7
-	{"Pin Artists", "Keep artists panel expanded when unfocused"},       // 8
-	{"Show History", "Show play history panel below playlists"},         // 9
-	{"Show Radio", "Show radio history panel below play history"},       // 10
-	{"Show Artists", "Show artists panel"},                              // 11
-	{"Colors", "Customize TUI colors"},                                  // 12
-	{"YT Auth", "Use browser cookies to access your private playlists"}, // 13
-	{"Import", "Import playlist from YouTube URL"},                      // 14
+	{"Queue Next", "Add queued songs directly after current track"},     // 4
+	{"Rel Numbers", "Show relative line numbers (vim-style)"},           // 5
+	{"Pin Search", "Keep search panel expanded when unfocused"},         // 6
+	{"Pin Playlist", "Keep playlist detail expanded when unfocused"},    // 7
+	{"Pin Radio", "Keep radio history expanded when unfocused"},         // 8
+	{"Pin Artists", "Keep artists panel expanded when unfocused"},       // 9
+	{"Show History", "Show play history panel below playlists"},         // 10
+	{"Show Radio", "Show radio history panel below play history"},       // 11
+	{"Show Artists", "Show artists panel"},                              // 12
+	{"Colors", "Customize TUI colors"},                                  // 13
+	{"YT Auth", "Use browser cookies to access your private playlists"}, // 14
+	{"Import", "Import playlist from YouTube URL"},                      // 15
 }
 
 // browserOptions is the cycle for the Auth Browser setting.
@@ -49,25 +50,29 @@ func (a *App) settingValue(idx int) bool {
 	case 3:
 		return a.autoFocusQueue
 	case 4:
-		return a.relNumbers
+		return a.queueAfterCurrent
 	case 5:
-		return a.pinSearch
+		return a.relNumbers
 	case 6:
-		return a.pinPlaylist
+		return a.pinSearch
 	case 7:
-		return a.pinRadio
+		return a.pinPlaylist
 	case 8:
-		return a.pinArtists
+		return a.pinRadio
 	case 9:
-		return a.showHistory
+		return a.pinArtists
 	case 10:
-		return a.showRadio
+		return a.showHistory
 	case 11:
-		return a.showArtistsPanel
+		return a.showRadio
 	case 12:
-		return false // Colors — not a boolean toggle
+		return a.showArtistsPanel
 	case 13:
+		return false // Colors — not a boolean toggle
+	case 14:
 		return a.cookieBrowser != ""
+	case 15:
+		return false
 	}
 	return false
 }
@@ -99,34 +104,37 @@ func (a *App) toggleSetting(idx int) {
 	case 3:
 		a.autoFocusQueue = !a.autoFocusQueue
 	case 4:
-		a.relNumbers = !a.relNumbers
+		a.queueAfterCurrent = !a.queueAfterCurrent
 	case 5:
-		a.pinSearch = !a.pinSearch
+		a.relNumbers = !a.relNumbers
 	case 6:
-		a.pinPlaylist = !a.pinPlaylist
+		a.pinSearch = !a.pinSearch
 	case 7:
-		a.pinRadio = !a.pinRadio
+		a.pinPlaylist = !a.pinPlaylist
 	case 8:
-		a.pinArtists = !a.pinArtists
+		a.pinRadio = !a.pinRadio
 	case 9:
+		a.pinArtists = !a.pinArtists
+	case 10:
 		a.showHistory = !a.showHistory
 		if !a.showHistory && a.focusedPanel == panelHistory {
 			a.focusedPanel = panelPlaylist
 		}
-	case 10:
+	case 11:
 		a.showRadio = !a.showRadio
 		if !a.showRadio && a.focusedPanel == panelRadioHist {
 			a.focusedPanel = panelPlaylist
 		}
-	case 11:
+	case 12:
 		a.showArtistsPanel = !a.showArtistsPanel
 		if !a.showArtistsPanel && a.focusedPanel == panelArtists {
 			a.focusedPanel = panelPlaylist
 		}
-	case 12:
-		// Colors — opens color editor, handled in updateSettings
 	case 13:
+		// Colors — opens color editor, handled in updateSettings
+	case 14:
 		a.cycleBrowser(1)
+	case 15:
 	}
 }
 
@@ -315,12 +323,12 @@ func (a App) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		realIdx := filtered[a.settingsCur]
-		if realIdx == 12 { // Colors
+		if realIdx == 13 { // Colors
 			a.showColorEditor = true
 			a.colorEditorCur = 0
 			return a, nil
 		}
-		if realIdx == 14 { // Import Playlist
+		if realIdx == 15 { // Import Playlist
 			a.settingsImporting = true
 			a.settingsImportInput.SetValue("")
 			a.settingsImportInput.Focus()
@@ -336,12 +344,12 @@ func (a App) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch realIdx {
 		case 2:
 			a.toggleSetting(2)
-		case 12:
+		case 13:
 			a.showColorEditor = true
 			a.colorEditorCur = 0
-		case 13:
-			a.cycleBrowser(1)
 		case 14:
+			a.cycleBrowser(1)
+		case 15:
 		default:
 			if !a.settingValue(realIdx) {
 				a.toggleSetting(realIdx)
@@ -356,10 +364,10 @@ func (a App) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch realIdx {
 		case 2:
 			a.loopOff()
-		case 12:
 		case 13:
-			a.cycleBrowser(-1)
 		case 14:
+			a.cycleBrowser(-1)
+		case 15:
 		default:
 			if a.settingValue(realIdx) {
 				a.toggleSetting(realIdx)
@@ -424,15 +432,15 @@ func (a App) renderSettings() string {
 			} else {
 				toggle = settingsOnStyle.Render(fmt.Sprintf("[%dx] ", a.loopTotal))
 			}
-		case 12:
-			toggle = actionStyle.Render("[>>>]")
 		case 13:
+			toggle = actionStyle.Render("[>>>]")
+		case 14:
 			if a.cookieBrowser == "" {
 				toggle = settingsOffStyle.Render("[OFF]")
 			} else {
 				toggle = settingsOnStyle.Render(fmt.Sprintf("[%-9s]", a.cookieBrowser))
 			}
-		case 14:
+		case 15:
 			toggle = actionStyle.Render("[>>>]")
 		default:
 			val := a.settingValue(realIdx)

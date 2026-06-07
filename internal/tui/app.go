@@ -101,19 +101,20 @@ type App struct {
 	// Tick counter for marquee animation (incremented every playerTick = 500ms)
 	tickCount int
 	// Settings
-	theme               Theme           // customizable color theme
-	autoplay            bool            // auto-advance to next track on EOF
-	shuffle             bool            // randomize next track selection
-	loopTrack           bool            // loop current track on EOF
-	loopCount           int             // remaining loops (0 = infinite)
-	loopTotal           int             // original loop count for display
-	pinSearch           bool            // keep search panel expanded when unfocused
-	pinPlaylist         bool            // keep playlist detail expanded when unfocused
-	showHistory         bool            // show history panel below playlists
-	showRadio           bool            // show radio history panel
-	pinRadio            bool            // keep radio history expanded when unfocused
-	relNumbers          bool            // show relative line numbers (vim-style)
-	autoFocusQueue      bool            // focus queue panel when playing a track
+	theme               Theme // customizable color theme
+	autoplay            bool  // auto-advance to next track on EOF
+	shuffle             bool  // randomize next track selection
+	loopTrack           bool  // loop current track on EOF
+	loopCount           int   // remaining loops (0 = infinite)
+	loopTotal           int   // original loop count for display
+	pinSearch           bool  // keep search panel expanded when unfocused
+	pinPlaylist         bool  // keep playlist detail expanded when unfocused
+	showHistory         bool  // show history panel below playlists
+	showRadio           bool  // show radio history panel
+	pinRadio            bool  // keep radio history expanded when unfocused
+	relNumbers          bool  // show relative line numbers (vim-style)
+	autoFocusQueue      bool  // focus queue panel when playing a track
+	queueAfterCurrent   bool
 	cookieBrowser       string          // browser for yt-dlp cookie auth ("" = off)
 	showSettings        bool            // settings overlay visible
 	settingsCur         int             // cursor in settings list
@@ -381,6 +382,7 @@ func New(plStore *model.PlaylistStore) App {
 		pinRadio:             sess.PinRadio,
 		relNumbers:           sess.RelNumbers,
 		autoFocusQueue:       sess.AutoFocusQueue,
+		queueAfterCurrent:    sess.QueueAfterCurrent,
 		cookieBrowser:        sess.CookieBrowser,
 		showArtistsPanel:     sess.ShowArtists,
 		pinArtists:           sess.PinArtists,
@@ -622,8 +624,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Add all to queue
 		a.saveQueueUndo()
-		a.qdata.Add(msg.tracks...)
-		a.queue.cursor = a.qdata.Len() - 1
+		a.addToQueue(msg.tracks...)
 		cmd := a.setStatus(fmt.Sprintf("Added %d tracks from \"%s\" to queue", len(msg.tracks), msg.album.Title))
 		return a, cmd
 
@@ -647,9 +648,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.tracks) == 1 {
 			t := msg.tracks[0]
 			a.saveQueueUndo()
-			a.qdata.Add(t)
-			a.queue.cursor = a.qdata.Len() - 1
-			a.qdata.Current = a.qdata.Len() - 1
+			insertIdx := a.addToQueue(t)
+			a.qdata.Current = insertIdx
 			a.playTrack(&a.qdata.Tracks[a.qdata.Current], "artist")
 			cmd := a.setStatus(fmt.Sprintf("Playing: %s", t.Title))
 			return a, cmd

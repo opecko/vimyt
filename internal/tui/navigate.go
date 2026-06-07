@@ -33,10 +33,7 @@ func (a App) handleEnter() (tea.Model, tea.Cmd) {
 		}
 		if len(tracks) > 0 {
 			a.saveQueueUndo()
-			for _, t := range tracks {
-				a.qdata.Add(t)
-			}
-			a.queue.cursor = a.qdata.Len() - 1
+			a.addToQueue(tracks...)
 			if a.autoFocusQueue && a.focusedPanel != panelQueue {
 				a.pushJump(a.focusedPanel)
 				a.prevPanel = a.focusedPanel
@@ -57,9 +54,8 @@ func (a App) handleEnter() (tea.Model, tea.Cmd) {
 		}
 		a.pushPrev()
 		a.saveQueueUndo()
-		a.qdata.Add(*t)
-		a.queue.cursor = a.qdata.Len() - 1
-		a.qdata.Current = a.qdata.Len() - 1
+		insertIdx := a.addToQueue(*t)
+		a.qdata.Current = insertIdx
 		a.playTrack(t, "search")
 		played = true
 	case panelQueue:
@@ -77,9 +73,8 @@ func (a App) handleEnter() (tea.Model, tea.Cmd) {
 		}
 		a.pushPrev()
 		a.saveQueueUndo()
-		a.qdata.Add(*t)
-		a.queue.cursor = a.qdata.Len() - 1
-		a.qdata.Current = a.qdata.Len() - 1
+		insertIdx := a.addToQueue(*t)
+		a.qdata.Current = insertIdx
 		a.playTrack(t, "history")
 		played = true
 	case panelRadioHist:
@@ -97,9 +92,8 @@ func (a App) handleEnter() (tea.Model, tea.Cmd) {
 				t := tracks[a.playlist.detailCur]
 				a.pushPrev()
 				a.saveQueueUndo()
-				a.qdata.Add(t)
-				a.queue.cursor = a.qdata.Len() - 1
-				a.qdata.Current = a.qdata.Len() - 1
+				insertIdx := a.addToQueue(t)
+				a.qdata.Current = insertIdx
 				a.playTrack(&a.qdata.Tracks[a.qdata.Current], "playlist")
 				played = true
 			}
@@ -438,8 +432,7 @@ func (a App) handleAddToPlaylist() (tea.Model, tea.Cmd) {
 					if sa.ID == album.ID && len(sa.Tracks) > 0 {
 						cached := savedAlbumTracksToModel(sa.Tracks)
 						a.saveQueueUndo()
-						a.qdata.Add(cached...)
-						a.queue.cursor = a.qdata.Len() - 1
+						a.addToQueue(cached...)
 						cmd := a.setStatus(fmt.Sprintf("Added %d tracks from \"%s\" to queue", len(cached), album.Title))
 						return a, cmd
 					}
@@ -469,8 +462,7 @@ func (a App) handleAddToPlaylist() (tea.Model, tea.Cmd) {
 			}
 			if len(tracks) > 0 {
 				a.saveQueueUndo()
-				a.qdata.Add(tracks...)
-				a.queue.cursor = a.qdata.Len() - 1
+				a.addToQueue(tracks...)
 				cmd := a.setStatus(fmt.Sprintf("Added %d tracks to queue", len(tracks)))
 				return a, cmd
 			}
@@ -497,8 +489,7 @@ func (a App) handleAddToPlaylist() (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 			a.saveQueueUndo()
-			a.qdata.Add(tracks...)
-			a.queue.cursor = a.qdata.Len() - 1
+			a.addToQueue(tracks...)
 			var name string
 			if a.playlist.listCur < len(pls) {
 				name = pls[a.playlist.listCur].Name
@@ -616,8 +607,7 @@ func (a App) updateOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if idx == 0 {
 					// Queue
 					a.saveQueueUndo()
-					a.qdata.Add(a.overlay.tracks...)
-					a.queue.cursor = a.qdata.Len() - 1
+					a.addToQueue(a.overlay.tracks...)
 					names = append(names, "Queue")
 				} else {
 					plIdx := idx - 1
@@ -655,8 +645,7 @@ func (a App) updateOverlay(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if a.overlay.isQueueSelected() {
 			// Add to queue
 			a.saveQueueUndo()
-			a.qdata.Add(a.overlay.tracks...)
-			a.queue.cursor = a.qdata.Len() - 1
+			a.addToQueue(a.overlay.tracks...)
 			a.overlay.close()
 			statusMsg := fmt.Sprintf("%d song", trackCount)
 			if trackCount != 1 {

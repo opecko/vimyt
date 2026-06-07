@@ -220,9 +220,8 @@ func (a *App) artistsPanelEnter() tea.Cmd {
 					if len(tracks) == 1 {
 						t := tracks[0]
 						a.saveQueueUndo()
-						a.qdata.Add(t)
-						a.queue.cursor = a.qdata.Len() - 1
-						a.qdata.Current = a.qdata.Len() - 1
+						insertIdx := a.addToQueue(t)
+						a.qdata.Current = insertIdx
 						a.playTrack(&a.qdata.Tracks[a.qdata.Current], "artist")
 						return nil
 					}
@@ -253,9 +252,8 @@ func (a *App) artistsPanelEnter() tea.Cmd {
 	}
 	t := a.artistsPanelTrks[a.artistsPanelCur]
 	a.saveQueueUndo()
-	a.qdata.Add(t)
-	a.queue.cursor = a.qdata.Len() - 1
-	a.qdata.Current = a.qdata.Len() - 1
+	insertIdx := a.addToQueue(t)
+	a.qdata.Current = insertIdx
 	a.playTrack(&a.qdata.Tracks[a.qdata.Current], "artist")
 	return nil
 }
