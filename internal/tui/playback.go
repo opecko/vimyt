@@ -19,6 +19,21 @@ func (a *App) syncRadioToQueue() {
 	}
 }
 
+func (a *App) addToQueue(tracks ...model.Track) int {
+	if len(tracks) == 0 {
+		return -1
+	}
+	insertIdx := a.qdata.Len()
+	if a.queueAfterCurrent && a.qdata.Current >= 0 && a.qdata.Current < a.qdata.Len() {
+		insertIdx = a.qdata.Current + 1
+		a.qdata.InsertAfter(a.qdata.Current, tracks...)
+	} else {
+		a.qdata.Add(tracks...)
+	}
+	a.queue.cursor = insertIdx + len(tracks) - 1
+	return insertIdx
+}
+
 // pickNextTrack determines the index of the next track to play and updates shuffle state.
 // Uses shuffle-without-repeats when shuffle is on, sequential wrap otherwise.
 func (a *App) pickNextTrack() int {
@@ -194,37 +209,38 @@ func (a *App) saveSession() {
 	}
 
 	s := model.Session{
-		View:           int(a.focusedPanel),
-		SearchQuery:    a.search.input.Value(),
-		SearchCur:      a.search.cursor,
-		QueueCur:       a.queue.cursor,
-		HistoryCur:     a.history.cursor,
-		RadioHistCur:   a.radioHistCur,
-		PLListCur:      a.playlist.listCur,
-		PLDetailCur:    a.playlist.detailCur,
-		Zoomed:         a.zoomed,
-		PlaybackPos:    playPos,
-		RadioActive:    a.radioActive,
-		RadioSeed:      a.radioSeedTitle,
-		Volume:         status.Volume,
-		Autoplay:       a.autoplay,
-		Shuffle:        a.shuffle,
-		PinSearch:      a.pinSearch,
-		PinPlaylist:    a.pinPlaylist,
-		ShowHistory:    a.showHistory,
-		ShowRadio:      a.showRadio,
-		PinRadio:       a.pinRadio,
-		RelNumbers:     a.relNumbers,
-		AutoFocusQueue: a.autoFocusQueue,
-		CookieBrowser:  a.cookieBrowser,
-		ShowArtists:    a.showArtistsPanel,
-		PinArtists:     a.pinArtists,
-		ArtistsCur:     a.artistsPanelCur,
-		LoopTrack:      a.loopTrack,
-		LoopPlaylist:   a.loopPlaylist,
-		LoopCount:      a.loopCount,
-		LoopTotal:      a.loopTotal,
-		Theme:          a.theme.ToMap(),
+		View:              int(a.focusedPanel),
+		SearchQuery:       a.search.input.Value(),
+		SearchCur:         a.search.cursor,
+		QueueCur:          a.queue.cursor,
+		HistoryCur:        a.history.cursor,
+		RadioHistCur:      a.radioHistCur,
+		PLListCur:         a.playlist.listCur,
+		PLDetailCur:       a.playlist.detailCur,
+		Zoomed:            a.zoomed,
+		PlaybackPos:       playPos,
+		RadioActive:       a.radioActive,
+		RadioSeed:         a.radioSeedTitle,
+		Volume:            status.Volume,
+		Autoplay:          a.autoplay,
+		Shuffle:           a.shuffle,
+		PinSearch:         a.pinSearch,
+		PinPlaylist:       a.pinPlaylist,
+		ShowHistory:       a.showHistory,
+		ShowRadio:         a.showRadio,
+		PinRadio:          a.pinRadio,
+		RelNumbers:        a.relNumbers,
+		AutoFocusQueue:    a.autoFocusQueue,
+		QueueAfterCurrent: a.queueAfterCurrent,
+		CookieBrowser:     a.cookieBrowser,
+		ShowArtists:       a.showArtistsPanel,
+		PinArtists:        a.pinArtists,
+		ArtistsCur:        a.artistsPanelCur,
+		LoopTrack:         a.loopTrack,
+		LoopPlaylist:      a.loopPlaylist,
+		LoopCount:         a.loopCount,
+		LoopTotal:         a.loopTotal,
+		Theme:             a.theme.ToMap(),
 	}
 	if a.playlist.radioActive {
 		// Don't save radio as detail level — go back to list

@@ -327,11 +327,10 @@ func (a App) handleYank() tea.Model {
 	a.clipboardHadCurrent = false
 	a.saveQueueUndo()
 	wasEmpty := a.player.Status().State == model.Stopped
-	a.qdata.Add(tracks...)
-	a.queue.cursor = a.qdata.Len() - 1
+	insertIdx := a.addToQueue(tracks...)
 	if wasEmpty {
 		a.pushPrev()
-		a.qdata.Current = a.qdata.Len() - len(tracks)
+		a.qdata.Current = insertIdx
 		a.playTrack(&a.qdata.Tracks[a.qdata.Current], "queue")
 	}
 	return a

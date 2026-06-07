@@ -38,12 +38,26 @@ func LoadPlayHistory() *PlayHistory {
 		return h
 	}
 	_ = json.Unmarshal(data, h)
+	changed := false
+	for i := range h.Entries {
+		title := SanitizeText(h.Entries[i].Title)
+		artist := SanitizeText(h.Entries[i].Artist)
+		if title != h.Entries[i].Title || artist != h.Entries[i].Artist {
+			h.Entries[i].Title = title
+			h.Entries[i].Artist = artist
+			changed = true
+		}
+	}
+	if changed {
+		h.Save()
+	}
 	return h
 }
 
 // Add records a played track and persists to disk.
 // Deduplicates consecutive plays of the same track.
 func (h *PlayHistory) Add(t Track, source string) {
+	t = SanitizeTrack(t)
 	// Don't add duplicates for the same track played back-to-back
 	if len(h.Entries) > 0 {
 		last := h.Entries[len(h.Entries)-1]

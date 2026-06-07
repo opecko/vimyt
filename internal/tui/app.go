@@ -101,20 +101,21 @@ type App struct {
 	// Tick counter for marquee animation (incremented every playerTick = 500ms)
 	tickCount int
 	// Settings
-	theme               Theme           // customizable color theme
-	autoplay            bool            // auto-advance to next track on EOF
-	shuffle             bool            // randomize next track selection
-	loopTrack           bool            // loop current track on EOF
-	loopPlaylist        bool            // loop entire playlist on EOF
-	loopCount           int             // remaining loops (0 = infinite)
-	loopTotal           int             // original loop count for display
-	pinSearch           bool            // keep search panel expanded when unfocused
-	pinPlaylist         bool            // keep playlist detail expanded when unfocused
-	showHistory         bool            // show history panel below playlists
-	showRadio           bool            // show radio history panel
-	pinRadio            bool            // keep radio history expanded when unfocused
-	relNumbers          bool            // show relative line numbers (vim-style)
-	autoFocusQueue      bool            // focus queue panel when playing a track
+	theme               Theme // customizable color theme
+	autoplay            bool  // auto-advance to next track on EOF
+	shuffle             bool  // randomize next track selection
+	loopTrack           bool  // loop current track on EOF
+	loopPlaylist        bool  // loop entire playlist on EOF
+	loopCount           int   // remaining loops (0 = infinite)
+	loopTotal           int   // original loop count for display
+	pinSearch           bool  // keep search panel expanded when unfocused
+	pinPlaylist         bool  // keep playlist detail expanded when unfocused
+	showHistory         bool  // show history panel below playlists
+	showRadio           bool  // show radio history panel
+	pinRadio            bool  // keep radio history expanded when unfocused
+	relNumbers          bool  // show relative line numbers (vim-style)
+	autoFocusQueue      bool  // focus queue panel when playing a track
+	queueAfterCurrent   bool
 	cookieBrowser       string          // browser for yt-dlp cookie auth ("" = off)
 	showSettings        bool            // settings overlay visible
 	settingsCur         int             // cursor in settings list
@@ -165,6 +166,15 @@ type App struct {
 	// Vim-style jumplist for panel focus changes
 	jumpBack []panel // back stack
 	jumpFwd  []panel // forward stack
+
+	deviceID                 string
+	deviceName               string
+	lastClaimTrackID         string
+	lastClaimPlaying         bool
+	lastSeenForeignID        string
+	lastSeenForeignAt        string
+	suppressNextClaimPublish bool
+	foreignClaim             *model.NowPlaying
 }
 
 // clearStatusMsg is sent after the status message timeout expires.
@@ -382,6 +392,7 @@ func New(plStore *model.PlaylistStore, p *player.Player) App {
 		pinRadio:             sess.PinRadio,
 		relNumbers:           sess.RelNumbers,
 		autoFocusQueue:       sess.AutoFocusQueue,
+		queueAfterCurrent:    sess.QueueAfterCurrent,
 		cookieBrowser:        sess.CookieBrowser,
 		showArtistsPanel:     sess.ShowArtists,
 		pinArtists:           sess.PinArtists,
@@ -419,6 +430,10 @@ func New(plStore *model.PlaylistStore, p *player.Player) App {
 	app.artistsFilterInp = afi
 	app.artistsPanelCur = sess.ArtistsCur
 	app.artistsPanelCur = min(app.artistsPanelCur, max(app.artistStore.Len()-1, 0))
+
+	app.deviceID, _ = model.LoadDeviceID()
+	app.deviceName = model.DeviceName()
+
 	applyTheme(app.theme)
 	return app
 }
@@ -563,6 +578,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.loopTotal = 0
 			a.loopCount = 0
 		}
+		a.honourForeignClaim()
+		a.publishLocalClaim(status)
 
 		// Auto-advance: if player stopped (track ended).
 		// Loop track takes priority: replay the same track.
@@ -628,24 +645,46 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
-		// Panel layout dimensions for sub-models — approximate for scroll calc.
-		// Actual rendering uses dynamic search height in View().
-		contentHeight := msg.Height - 2 // status bar (1) + now-playing bar (1)
-		searchH := contentHeight / 2
+		// Panel layout dimensions for sub-models — used by ensureVisible() for scroll calc.
+		// Match View()'s logic: contentHeight = height - 1 (bottom bar).
+		// When search is not focused/pinned, searchH = 3 (compact).
+		contentHeight := msg.Height - 1
+		searchFocused := a.focusedPanel == panelSearch
+		searchH := 3 // compact default
+		if searchFocused || a.pinSearch {
+			searchH = contentHeight / 2
+		}
 		bottomH := contentHeight - searchH
+		if bottomH < 5 {
+			bottomH = 5
+			searchH = contentHeight - bottomH
+		}
 		leftW := msg.Width * 40 / 100
 		rightW := msg.Width - leftW
-		plH := bottomH / 3
-		histH := bottomH / 3
-		// radioHistH would be bottomH - plH - histH but not stored as sub-model
-		a.search.height = searchH - 2
-		a.search.width = msg.Width - 2
-		a.queue.height = bottomH - 2
-		a.queue.width = rightW - 2
-		a.playlist.height = plH - 2
-		a.playlist.width = leftW - 2
-		a.history.height = histH - 2
-		a.history.width = leftW - 2
+		// Distribute left column height among visible panels
+		nPanels := 1 // playlist always shown
+		if a.showHistory {
+			nPanels++
+		}
+		if a.showRadio {
+			nPanels++
+		}
+		if a.showArtistsPanel {
+			nPanels++
+		}
+		plH := bottomH / max(nPanels, 1)
+		histH := 3
+		if a.showHistory && a.focusedPanel == panelHistory {
+			histH = bottomH / max(nPanels, 1)
+		}
+		a.search.height = max(searchH-2, 1)
+		a.search.width = max(msg.Width-2, 1)
+		a.queue.height = max(bottomH-2, 1)
+		a.queue.width = max(rightW-2, 1)
+		a.playlist.height = max(plH-2, 1)
+		a.playlist.width = max(leftW-2, 1)
+		a.history.height = max(histH-2, 1)
+		a.history.width = max(leftW-2, 1)
 		return a, nil
 
 	case searchResultMsg:
@@ -737,8 +776,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Add all to queue
 		a.saveQueueUndo()
-		a.qdata.Add(msg.tracks...)
-		a.queue.cursor = a.qdata.Len() - 1
+		a.addToQueue(msg.tracks...)
 		cmd := a.setStatus(fmt.Sprintf("Added %d tracks from \"%s\" to queue", len(msg.tracks), msg.album.Title))
 		return a, cmd
 
@@ -762,9 +800,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.tracks) == 1 {
 			t := msg.tracks[0]
 			a.saveQueueUndo()
-			a.qdata.Add(t)
-			a.queue.cursor = a.qdata.Len() - 1
-			a.qdata.Current = a.qdata.Len() - 1
+			insertIdx := a.addToQueue(t)
+			a.qdata.Current = insertIdx
 			a.playTrack(&a.qdata.Tracks[a.qdata.Current], "artist")
 			cmd := a.setStatus(fmt.Sprintf("Playing: %s", t.Title))
 			return a, cmd

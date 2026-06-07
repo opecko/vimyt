@@ -90,13 +90,13 @@ func Search(query string) ([]model.Track, error) {
 		title := cleanTitle(r.Title, artist)
 		dur := time.Duration(r.Duration * float64(time.Second))
 
-		tracks = append(tracks, model.Track{
+		tracks = append(tracks, model.SanitizeTrack(model.Track{
 			ID:           r.ID,
 			Title:        title,
 			Artist:       artist,
 			Duration:     dur,
 			ThumbnailURL: r.Thumbnail,
-		})
+		}))
 	}
 
 	if err := cmd.Wait(); err != nil && len(tracks) == 0 {
@@ -265,13 +265,13 @@ func fetchRadioPlaylist(videoID string) []model.Track {
 		title := cleanTitle(r.Title, artist)
 		dur := time.Duration(r.Duration * float64(time.Second))
 
-		pool = append(pool, model.Track{
+		pool = append(pool, model.SanitizeTrack(model.Track{
 			ID:           r.ID,
 			Title:        title,
 			Artist:       artist,
 			Duration:     dur,
 			ThumbnailURL: r.Thumbnail,
-		})
+		}))
 	}
 
 	_ = cmd.Wait()
@@ -286,6 +286,27 @@ type ytdlpPlaylistResult struct {
 	Duration  float64 `json:"duration"`
 	Thumbnail string  `json:"thumbnail"`
 	Playlist  string  `json:"playlist_title"`
+}
+
+// FetchDescription fetches the video description via yt-dlp.
+// The description often contains album info and sometimes lyrics for music videos.
+func FetchDescription(videoID string) (string, error) {
+	url := fmt.Sprintf("https://www.youtube.com/watch?v=%s", videoID)
+	args := []string{
+		"--print", "description",
+		"--skip-download",
+		"--no-warnings",
+		url,
+	}
+	args = append(args, CookieArgs()...)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 const maxImportTracks = 1000
@@ -344,13 +365,13 @@ func FetchPlaylist(url string) (string, []model.Track, error) {
 		title := cleanTitle(r.Title, artist)
 		dur := time.Duration(r.Duration * float64(time.Second))
 
-		tracks = append(tracks, model.Track{
+		tracks = append(tracks, model.SanitizeTrack(model.Track{
 			ID:           r.ID,
 			Title:        title,
 			Artist:       artist,
 			Duration:     dur,
 			ThumbnailURL: r.Thumbnail,
-		})
+		}))
 	}
 
 	if err := cmd.Wait(); err != nil && len(tracks) == 0 {

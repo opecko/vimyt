@@ -146,6 +146,8 @@ func (a App) View() string {
 		bottomBar = sbBgStyle.Width(a.width).Render("  " + a.depErr)
 	} else if a.statusMsg != "" {
 		bottomBar = sbBgStyle.Width(a.width).Render("  " + a.statusMsg)
+	} else if a.foreignClaim != nil {
+		bottomBar = renderRemoteNowPlaying(a.foreignClaim, a.width)
 	} else {
 		bottomBar = renderNowPlaying(a.player.Status(), a.width, favSet, a.autoplay, a.shuffle, a.loopTrack, a.loopPlaylist, a.loopTotal, a.tickCount)
 	}
@@ -308,27 +310,31 @@ func (a App) View() string {
 
 	// Compute left column split: Playlists, [Artists], History, and Radio History heights
 	// Playlist is "expanded" only when viewing tracks inside a playlist (levelDetail).
-	// At list level, it's compact regardless of focus.
+	// At list level, it only shows the list while focused.
 	plFocused := a.focusedPanel == panelPlaylist
-	plExpanded := a.playlist.level == levelDetail && (plFocused || a.pinPlaylist)
+	leftCollapseFocused := a.focusedPanel == panelSearch || a.focusedPanel == panelHistory || a.focusedPanel == panelRadioHist
+	plExpanded := a.playlist.level == levelDetail && (plFocused || a.pinPlaylist) && !leftCollapseFocused
 	compactH := 3 // border(2) + 1 line summary
 	radioHistExpanded := a.focusedPanel == panelRadioHist || a.pinRadio
 	plListH := max(len(a.playlist.visiblePlaylists())+2, 3) // border(2) + 1 line per playlist
+	plWantsList := !leftCollapseFocused && (plFocused || plExpanded || a.focusedPanel == panelQueue)
 
 	// Pre-compute artists height needs
 	artistsFocused := a.focusedPanel == panelArtists
-	artistsExpanded := artistsFocused || (a.pinArtists && a.artistsLevel > 0)
+	artistsExpanded := (artistsFocused || (a.pinArtists && a.artistsLevel > 0)) && !leftCollapseFocused
 
 	// Reserve space for artists panel in the left column calculations
 	artistsReserve := 0 // extra height needed for artists panel
 	if a.showArtistsPanel {
-		if artistsExpanded && !plFocused && !plExpanded {
+		if leftCollapseFocused {
+			artistsReserve = compactH
+		} else if artistsExpanded && !plFocused && !plExpanded {
 			// Will get bulk — handled separately below
 			artistsReserve = 0
 		} else if plFocused || plExpanded {
 			artistsReserve = compactH
 		} else {
-			// Show artist list: need enough to display all artists
+			// Show artist list when search/history panels are not taking focus.
 			artistsReserve = max(a.artistStore.Len()+2, compactH)
 		}
 	}
@@ -387,7 +393,10 @@ func (a App) View() string {
 			}
 		} else {
 			// None focused — compact for all non-expanded
-			playlistH = plListH
+			playlistH = compactH
+			if plWantsList {
+				playlistH = plListH
+			}
 			historyH = compactH
 			radioHistH = compactH
 			remaining := effectiveBottomH - playlistH - historyH - radioHistH
@@ -422,7 +431,10 @@ func (a App) View() string {
 				playlistH = effectiveBottomH - historyH
 			}
 		} else {
-			playlistH = plListH
+			playlistH = compactH
+			if plWantsList {
+				playlistH = plListH
+			}
 			historyH = compactH
 			remaining := effectiveBottomH - playlistH - historyH
 			if remaining > 0 {
@@ -453,7 +465,10 @@ func (a App) View() string {
 				playlistH = effectiveBottomH - radioHistH
 			}
 		} else {
-			playlistH = plListH
+			playlistH = compactH
+			if plWantsList {
+				playlistH = plListH
+			}
 			radioHistH = compactH
 			remaining := effectiveBottomH - playlistH - radioHistH
 			if remaining > 0 {
@@ -498,6 +513,27 @@ func (a App) View() string {
 				playlistH = max(playlistH, 3)
 			}
 		}
+		// Hard enforcement: if the total still doesn't match (due to min clamps),
+		// forcibly shrink the largest panel until the sum equals effectiveBottomH.
+		for playlistH+historyH+radioHistH > effectiveBottomH {
+			if playlistH >= historyH && playlistH >= radioHistH {
+				playlistH--
+			} else if historyH >= radioHistH {
+				historyH--
+			} else {
+				radioHistH--
+			}
+			if playlistH <= 0 && historyH <= 0 && radioHistH <= 0 {
+				break
+			}
+		}
+		playlistH = max(playlistH, 1)
+		if a.showHistory {
+			historyH = max(historyH, 1)
+		}
+		if a.showRadio {
+			radioHistH = max(radioHistH, 1)
+		}
 	}
 
 	// Inner dimensions (subtract 2 for border on each axis)
@@ -530,7 +566,9 @@ func (a App) View() string {
 	// Render panel contents
 	searchContent := a.search.ViewConstrained(searchInnerW, searchInnerH)
 	var playlistContent string
-	if a.playlist.level == levelDetail && !plExpanded {
+	if !plWantsList {
+		playlistContent = fmt.Sprintf("  %d playlists\n", len(a.playlist.store.Playlists))
+	} else if a.playlist.level == levelDetail && !plExpanded {
 		// Collapsed detail: render list view to avoid cramped tracks
 		playlistContent = a.playlist.viewListConstrained(0, playlistInnerW, playlistInnerH)
 	} else {
@@ -602,7 +640,7 @@ func (a App) View() string {
 			artistsH = bottomH - playlistH - historyH - radioHistH
 			artistsH = max(artistsH, 3)
 		}
-		// Final guarantee
+		// Final guarantee: absorb difference, then hard-enforce sum == bottomH
 		{
 			total := playlistH + artistsH + historyH + radioHistH
 			if total != bottomH {
@@ -618,6 +656,29 @@ func (a App) View() string {
 					playlistH = max(playlistH, 3)
 				}
 			}
+			// Hard enforcement: forcibly shrink the largest panel if sum still exceeds bottomH.
+			for playlistH+artistsH+historyH+radioHistH > bottomH {
+				if playlistH >= artistsH && playlistH >= historyH && playlistH >= radioHistH {
+					playlistH--
+				} else if artistsH >= historyH && artistsH >= radioHistH {
+					artistsH--
+				} else if historyH >= radioHistH {
+					historyH--
+				} else {
+					radioHistH--
+				}
+				if playlistH <= 0 && artistsH <= 0 && historyH <= 0 && radioHistH <= 0 {
+					break
+				}
+			}
+			playlistH = max(playlistH, 1)
+			artistsH = max(artistsH, 1)
+			if a.showHistory {
+				historyH = max(historyH, 1)
+			}
+			if a.showRadio {
+				radioHistH = max(radioHistH, 1)
+			}
 		}
 
 		playlistInnerH = playlistH - 2
@@ -625,8 +686,7 @@ func (a App) View() string {
 			playlistInnerH = 1
 		}
 		// Re-render playlist content with new height
-		if playlistH <= compactH && a.focusedPanel != panelPlaylist {
-			// Compact: just show count
+		if !plWantsList {
 			playlistContent = fmt.Sprintf("  %d playlists\n", len(a.playlist.store.Playlists))
 		} else if a.playlist.level == levelDetail && !plExpanded {
 			playlistContent = a.playlist.viewListConstrained(0, playlistInnerW, playlistInnerH)
@@ -652,7 +712,7 @@ func (a App) View() string {
 		savedLevel := a.artistsLevel
 		a.artistsLevel = showLevel
 		var artistsContent string
-		if artistsFocused || artistsH > compactH {
+		if artistsExpanded || (!leftCollapseFocused && artistsH > compactH) {
 			artistsContent = a.renderArtistsPanelConstrained(artistsInnerW, artistsInnerH)
 		} else {
 			artistsContent = a.renderArtistsCompact(artistsInnerW)
