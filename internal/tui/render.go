@@ -146,6 +146,8 @@ func (a App) View() string {
 		bottomBar = sbBgStyle.Width(a.width).Render("  " + a.depErr)
 	} else if a.statusMsg != "" {
 		bottomBar = sbBgStyle.Width(a.width).Render("  " + a.statusMsg)
+	} else if a.foreignClaim != nil {
+		bottomBar = renderRemoteNowPlaying(a.foreignClaim, a.width)
 	} else {
 		bottomBar = renderNowPlaying(a.player.Status(), a.width, favSet, a.autoplay, a.shuffle, a.loopTrack, a.loopTotal, a.tickCount)
 	}

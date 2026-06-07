@@ -165,6 +165,15 @@ type App struct {
 	// Vim-style jumplist for panel focus changes
 	jumpBack []panel // back stack
 	jumpFwd  []panel // forward stack
+
+	deviceID                 string
+	deviceName               string
+	lastClaimTrackID         string
+	lastClaimPlaying         bool
+	lastSeenForeignID        string
+	lastSeenForeignAt        string
+	suppressNextClaimPublish bool
+	foreignClaim             *model.NowPlaying
 }
 
 // clearStatusMsg is sent after the status message timeout expires.
@@ -416,6 +425,10 @@ func New(plStore *model.PlaylistStore) App {
 	app.artistsFilterInp = afi
 	app.artistsPanelCur = sess.ArtistsCur
 	app.artistsPanelCur = min(app.artistsPanelCur, max(app.artistStore.Len()-1, 0))
+
+	app.deviceID, _ = model.LoadDeviceID()
+	app.deviceName = model.DeviceName()
+
 	applyTheme(app.theme)
 	return app
 }
@@ -450,6 +463,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Poll mpv status — Status() queries mpv IPC for real position/state.
 		// The player detects EOF internally and transitions to Stopped.
 		status := a.player.Status()
+
+		a.honourForeignClaim()
+		a.publishLocalClaim(status)
 
 		// Auto-advance: if player stopped (track ended).
 		// Loop track takes priority: replay the same track.

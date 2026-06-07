@@ -27,6 +27,35 @@ var (
 
 var npSettingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
 
+var (
+	npRemotePrefix = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("213")).
+			Bold(true)
+	npRemoteDevice = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("141"))
+)
+
+func renderRemoteNowPlaying(claim *model.NowPlaying, width int) string {
+	if claim == nil {
+		return ""
+	}
+	deviceName := claim.DeviceName
+	if deviceName == "" {
+		deviceName = "remote"
+	}
+	prefix := npRemotePrefix.Render("  REMOTE")
+	device := npRemoteDevice.Render("[" + deviceName + "]")
+	title := claim.Title
+	if title == "" {
+		title = claim.TrackID
+	}
+	titleRendered := npTitleStyle.Render(title)
+	artistRendered := npArtistStyle.Render(claim.Artist)
+
+	line := fmt.Sprintf("%s %s \u25B6 %s  %s", prefix, device, titleRendered, artistRendered)
+	return ansi.Truncate(nowPlayingStyle.Width(width).MaxWidth(width).Render(line), width, "")
+}
+
 func renderNowPlaying(status model.PlayerStatus, width int, favSet map[string]bool, autoplay bool, shuffle bool, loopTrack bool, loopTotal int, tick int) string {
 	if status.Track == nil {
 		line := "  Nothing playing"
