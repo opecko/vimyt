@@ -42,9 +42,14 @@ func New(player model.PlayerInterface) (*Server, error) {
 		return nil, err
 	}
 
-	if _, err := conn.RequestName(dbusName, dbus.NameFlagDoNotQueue); err != nil {
+	reply, err := conn.RequestName(dbusName, dbus.NameFlagDoNotQueue)
+	if err != nil {
 		conn.Close()
 		return nil, err
+	}
+	if reply != dbus.RequestNameReplyPrimaryOwner {
+		conn.Close()
+		return nil, fmt.Errorf("mpris name unavailable: %s", reply)
 	}
 
 	go s.watchPlayback(ctx)
@@ -83,7 +88,6 @@ func (s *Server) Close() {
 func (s *Server) Raise() *dbus.Error { return nil }
 
 func (s *Server) Quit() *dbus.Error {
-	close(s.quitDone)
 	s.quit()
 	return nil
 }
@@ -107,7 +111,9 @@ func (s *Server) Previous() *dbus.Error {
 }
 
 func (s *Server) Pause() *dbus.Error {
-	s.player.Pause()
+	if s.player.Status().State == model.Playing {
+		s.player.Pause()
+	}
 	return nil
 }
 
@@ -405,7 +411,7 @@ func (s *Server) watchPlayback(ctx context.Context) {
 
 			trackID := ""
 			if st.Track != nil {
-				trackID = st.Track.Title
+				trackID = st.Track.ID
 			}
 
 			changed := map[string]dbus.Variant{}

@@ -17,10 +17,6 @@ import (
 	"github.com/Sadoaz/vimyt/internal/youtube"
 )
 
-// playerGlobal is the shared player instance used by MPRIS goroutines.
-// Set in New() before the program starts.
-var playerGlobal *player.Player
-
 type panel int
 
 const (
@@ -353,9 +349,6 @@ func New(plStore *model.PlaylistStore, p *player.Player) App {
 	qm.cursor = min(qm.cursor, qdata.Len()-1)
 	qm.cursor = max(qm.cursor, 0)
 
-	// Set the global player reference for MPRIS channel polling before creating app
-	playerGlobal = p
-
 	app := App{
 		search:               sm,
 		queue:                qm,
@@ -405,6 +398,9 @@ func New(plStore *model.PlaylistStore, p *player.Player) App {
 	if sess.Volume > 0 {
 		app.player.SetVolume(sess.Volume)
 	}
+	app.player.SetShuffle(app.shuffle)
+	app.player.SetLoopTrack(app.loopTrack)
+	app.player.SetLoopPlaylist(app.loopPlaylist)
 	// Restore radio history cursor
 	app.radioHistCur = sess.RadioHistCur
 	rhVisible, _ := app.radioHistVisible()
@@ -427,13 +423,23 @@ func New(plStore *model.PlaylistStore, p *player.Player) App {
 	return app
 }
 
-// mprisMsg is sent when MPRIS clients trigger next/prev/seek/setpos.
+type mprisAction int
+
+const (
+	mprisNext mprisAction = iota
+	mprisPrev
+	mprisStop
+	mprisSeek
+	mprisSetPosition
+)
+
 type mprisMsg struct {
-	Action string // "next", "prev", "stop", "seek:<delta_μs>", "setpos:<pos_μs>"
+	Action mprisAction
+	Value  int64
 }
 
 func (a App) Init() tea.Cmd {
-	cmds := []tea.Cmd{playerTick(), mprisTick()}
+	cmds := []tea.Cmd{playerTick(), mprisTick(a.player)}
 
 	// Resume playback from last session — load paused and seek (no audio heard)
 	if a.qdata.Current >= 0 && a.qdata.Current < a.qdata.Len() && a.resumePos > 0 {
@@ -446,24 +452,22 @@ func (a App) Init() tea.Cmd {
 // mprisTick runs in a background goroutine, polling MPRIS action channels
 // every 100ms. When a message arrives, it returns it to the Bubble Tea event
 // loop. The Update handler then schedules a new mprisTick goroutine.
-func mprisTick() tea.Cmd {
+func mprisTick(p *player.Player) tea.Cmd {
 	return func() tea.Msg {
-		p := playerGlobal
 		for {
 			if p == nil {
 				time.Sleep(100 * time.Millisecond)
-				p = playerGlobal
 				continue
 			}
 			select {
 			case <-p.OnNext():
-				return mprisMsg{Action: "next"}
+				return mprisMsg{Action: mprisNext}
 			case <-p.OnPrev():
-				return mprisMsg{Action: "prev"}
+				return mprisMsg{Action: mprisPrev}
 			case delta := <-p.OnSeek():
-				return mprisMsg{Action: fmt.Sprintf("seek:%d", delta)}
+				return mprisMsg{Action: mprisSeek, Value: delta}
 			case pos := <-p.OnSetPosition():
-				return mprisMsg{Action: fmt.Sprintf("setpos:%d", pos)}
+				return mprisMsg{Action: mprisSetPosition, Value: pos}
 			case <-time.After(100 * time.Millisecond):
 			}
 		}
@@ -523,25 +527,18 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case mprisMsg:
 		switch msg.Action {
-		case "next":
+		case mprisNext:
 			a.handleMPRISNext()
-		case "prev":
+		case mprisPrev:
 			a.handleMPRISPrev()
-		case "stop":
+		case mprisStop:
 			a.player.Stop()
-		default:
-			if len(msg.Action) > 5 && msg.Action[:5] == "seek:" {
-				var delta int64
-				fmt.Sscanf(msg.Action[5:], "%d", &delta)
-				a.handleMPRISSeek(delta)
-			} else if len(msg.Action) > 7 && msg.Action[:7] == "setpos:" {
-				var pos int64
-				fmt.Sscanf(msg.Action[7:], "%d", &pos)
-				sec := float64(pos) / 1e6
-				a.player.SeekAbsolute(sec)
-			}
+		case mprisSeek:
+			a.handleMPRISSeek(msg.Value)
+		case mprisSetPosition:
+			a.player.SeekAbsolute(float64(msg.Value) / 1e6)
 		}
-		return a, mprisTick()
+		return a, mprisTick(a.player)
 
 	case playerTickMsg:
 		a.tickCount++
@@ -555,9 +552,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The player detects EOF internally and transitions to Stopped.
 		status := a.player.Status()
 
-		// Sync settings controlled via MPRIS (shuffle, loop)
-		a.shuffle = a.player.IsShuffle()
-		a.loopPlaylist = a.player.IsLoopPlaylist()
+		if a.player.IsShuffle() != a.shuffle {
+			a.shuffle = a.player.IsShuffle()
+		}
+		if a.player.IsLoopPlaylist() != a.loopPlaylist {
+			a.loopPlaylist = a.player.IsLoopPlaylist()
+		}
 		if a.player.IsLoopTrack() != a.loopTrack {
 			a.loopTrack = a.player.IsLoopTrack()
 			a.loopTotal = 0

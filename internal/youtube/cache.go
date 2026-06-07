@@ -178,7 +178,7 @@ func tryResolve(parent context.Context, id, format string, cookies []string) (ur
 		return "", "", fmt.Errorf("cancelled: %w", err)
 	}
 
-	args := []string{"-f", format, "--print", "url", "--print", "thumbnail", id, "--no-warnings", "--extractor-retries", "3"}
+	args := []string{"-f", format, "--print", "%(url)s\t%(thumbnail)s", "--no-warnings", "--extractor-retries", "3", id}
 	args = append(args, cookies...)
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
@@ -193,13 +193,14 @@ func tryResolve(parent context.Context, id, format string, cookies []string) (ur
 		return "", "", fmt.Errorf("yt-dlp resolve failed for %s (format %s): %w (%s)", id, format, err, errMsg)
 	}
 
-	lines := strings.SplitN(strings.TrimSpace(stdout.String()), "\n", 3)
-	if len(lines) == 0 || lines[0] == "" {
+	line := strings.TrimSpace(stdout.String())
+	if line == "" {
 		return "", "", fmt.Errorf("yt-dlp returned empty URL for %s (format %s)", id, format)
 	}
-	url = strings.TrimSpace(lines[0])
-	if len(lines) > 1 {
-		thumbnail = strings.TrimSpace(lines[1])
+	fields := strings.SplitN(line, "\t", 2)
+	url = strings.TrimSpace(fields[0])
+	if len(fields) > 1 {
+		thumbnail = strings.TrimSpace(fields[1])
 	}
 	return url, thumbnail, nil
 }
