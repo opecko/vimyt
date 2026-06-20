@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Sadoaz/vimyt/internal/discord"
 	"github.com/Sadoaz/vimyt/internal/model"
 	"github.com/Sadoaz/vimyt/internal/player"
 	"github.com/Sadoaz/vimyt/internal/youtube"
@@ -117,6 +118,13 @@ type App struct {
 	autoFocusQueue      bool  // focus queue panel when playing a track
 	queueAfterCurrent   bool
 	cookieBrowser       string          // browser for yt-dlp cookie auth ("" = off)
+	discordAppID        string          // user's Discord application ID ("" = RPC not set up)
+	discordRPC          bool            // publish Discord Rich Presence
+	discordButton       bool            // show "Listen on YT Music" button in RPC
+	discord             *discord.Server // Discord Rich Presence server (nil if disabled)
+	showDiscordSetup    bool            // Discord setup sub-view active
+	discordSetupInp     textinput.Model // text input for the Discord app ID
+	discordSetupConfirm bool            // "Discord RPC Set up!" dialog awaiting Enter
 	showSettings        bool            // settings overlay visible
 	settingsCur         int             // cursor in settings list
 	settingsImporting   bool            // true when URL input is active in settings
@@ -243,7 +251,7 @@ func checkDeps() string {
 }
 
 // New creates a new App model, restoring previous session state.
-func New(plStore *model.PlaylistStore, p *player.Player) App {
+func New(plStore *model.PlaylistStore, p *player.Player, dc *discord.Server) App {
 	ci := textinput.New()
 	ci.Prompt = ":"
 	ci.CharLimit = 10
@@ -286,6 +294,12 @@ func New(plStore *model.PlaylistStore, p *player.Player) App {
 	sfInp.CharLimit = 40
 	sfInp.Cursor.SetMode(cursor.CursorStatic)
 	hi.Cursor.SetMode(cursor.CursorStatic)
+
+	dsi := textinput.New()
+	dsi.Prompt = "App ID: "
+	dsi.Placeholder = "1387426000000000000"
+	dsi.CharLimit = 32
+	dsi.Cursor.SetMode(cursor.CursorStatic)
 
 	sessionExists := model.SessionExists()
 	sess := model.LoadSession()
@@ -401,7 +415,18 @@ func New(plStore *model.PlaylistStore, p *player.Player) App {
 		loopCount:            sess.LoopCount,
 		loopTotal:            sess.LoopTotal,
 		theme:                ThemeFromMap(sess.Theme),
+		discordAppID:         sess.DiscordAppID,
+		discordRPC:           sess.DiscordRPC,
+		discordButton:        sess.DiscordButton,
+		discord:              dc,
+		discordSetupInp:      dsi,
 		prefetchNextIdx:      -1,
+	}
+	// Apply persisted Discord Rich Presence settings to the server.
+	if dc != nil {
+		dc.SetAppID(app.discordAppID)
+		dc.SetShowButton(app.discordButton)
+		dc.SetEnabled(app.discordRPC)
 	}
 	// Apply cookie browser setting to youtube package
 	youtube.SetCookieBrowser(app.cookieBrowser)

@@ -184,5 +184,8 @@ func fetchReleases(channelID string) ([]Album, error) {
 // Returns the album title and tracks.
 func FetchAlbumTracks(album Album) ([]model.Track, error) {
 	_, tracks, err := FetchPlaylist(album.URL)
+	for i := range tracks {
+		tracks[i].Album = album.Title
+	}
 	return tracks, err
 }

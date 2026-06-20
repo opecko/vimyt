@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Sadoaz/vimyt/internal/discord"
 	"github.com/Sadoaz/vimyt/internal/model"
 	"github.com/Sadoaz/vimyt/internal/mpris"
 	"github.com/Sadoaz/vimyt/internal/player"
@@ -29,13 +30,18 @@ func main() {
 		}
 	}
 
+	// Discord Rich Presence. Starts disabled; the TUI enables it from the
+	// persisted session settings. Safe no-op if Discord is not running.
+	dc := discord.New(p, false, false, "")
+	defer dc.Close()
+
 	plStore, err := model.NewPlaylistStore()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading playlists: %v\n", err)
 		os.Exit(1)
 	}
 
-	app := tui.New(plStore, p)
+	app := tui.New(plStore, p, dc)
 	p2 := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p2.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running vimyt: %v\n", err)
