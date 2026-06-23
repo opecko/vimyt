@@ -33,9 +33,15 @@ var settingsOptions = []struct {
 	{"Show Radio", "Show radio history panel below play history"},       // 12
 	{"Show Artists", "Show artists panel"},                              // 13
 	{"Colors", "Customize TUI colors"},                                  // 14
-	{"YT Auth", "Use browser cookies to access your private playlists"}, // 15
-	{"Import", "Import playlist from YouTube URL"},                      // 16
+	{"YT Auth", "Use browser cookies to access your private playlists"},           // 15
+	{"Import", "Import playlist from YouTube URL"},                                // 16
+	{"Set up Discord RPC", "Configure your own Discord application ID to enable Rich Presence"}, // 17 (name overridden once set up)
+	{"Discord Rich Presence", "Show current track as a Discord listening status"},                // 18
+	{"Show Listen on YTMusic Button In RPC", "Add a button linking to the track on music.youtube.com"}, // 19
 }
+
+// discordSetUp reports whether the user has configured a Discord application ID.
+func (a *App) discordSetUp() bool { return a.discordAppID != "" }
 
 // browserOptions is the cycle for the Auth Browser setting.
 var browserOptions = []string{"", "firefox", "chrome", "chromium", "brave", "edge"}
@@ -76,6 +82,12 @@ func (a *App) settingValue(idx int) bool {
 		return a.cookieBrowser != ""
 	case 16:
 		return false
+	case 17:
+		return false // Set up / Change Discord App ID — action, not a toggle
+	case 18:
+		return a.discordRPC
+	case 19:
+		return a.discordButton
 	}
 	return false
 }
@@ -149,6 +161,18 @@ func (a *App) toggleSetting(idx int) {
 	case 15:
 		a.cycleBrowser(1)
 	case 16:
+	case 17:
+		// Set up / Change Discord App ID — opens its own screen, no toggle.
+	case 18:
+		a.discordRPC = !a.discordRPC
+		if a.discord != nil {
+			a.discord.SetEnabled(a.discordRPC)
+		}
+	case 19:
+		a.discordButton = !a.discordButton
+		if a.discord != nil {
+			a.discord.SetShowButton(a.discordButton)
+		}
 	}
 }
 
@@ -176,20 +200,21 @@ func (a *App) cycleBrowser(dir int) {
 
 // settingsFilteredIndices returns the indices of settings matching the filter.
 func (a *App) settingsFilteredIndices() []int {
-	if a.settingsFilter == "" {
-		indices := make([]int, len(settingsOptions))
-		for i := range settingsOptions {
-			indices[i] = i
-		}
-		return indices
-	}
-	filter := strings.ToLower(a.settingsFilter)
+	// The Discord RPC toggles (18, 19) stay hidden until the user has set up
+	// their own application ID.
+	setUp := a.discordSetUp()
 	var indices []int
+	filter := strings.ToLower(a.settingsFilter)
 	for i, opt := range settingsOptions {
-		if strings.Contains(strings.ToLower(opt.name), filter) ||
-			strings.Contains(strings.ToLower(opt.desc), filter) {
-			indices = append(indices, i)
+		if (i == 18 || i == 19) && !setUp {
+			continue
 		}
+		if a.settingsFilter != "" &&
+			!strings.Contains(strings.ToLower(opt.name), filter) &&
+			!strings.Contains(strings.ToLower(opt.desc), filter) {
+			continue
+		}
+		indices = append(indices, i)
 	}
 	return indices
 }
@@ -198,6 +223,11 @@ func (a App) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Handle color editor sub-view
 	if a.showColorEditor {
 		return a.updateColorEditor(msg)
+	}
+
+	// Handle Discord setup sub-view
+	if a.showDiscordSetup {
+		return a.updateDiscordSetup(msg)
 	}
 
 	// Handle settings search input
@@ -351,6 +381,10 @@ func (a App) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.settingsImportInput.Focus()
 			return a, nil
 		}
+		if realIdx == 17 { // Set up / Change Discord App ID
+			a.openDiscordSetup()
+			return a, nil
+		}
 		a.toggleSetting(realIdx)
 		return a, nil
 	case msg.String() == "l", msg.String() == "right":
@@ -367,6 +401,8 @@ func (a App) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 15:
 			a.cycleBrowser(1)
 		case 16:
+		case 17:
+			a.openDiscordSetup()
 		default:
 			if !a.settingValue(realIdx) {
 				a.toggleSetting(realIdx)
@@ -385,6 +421,7 @@ func (a App) updateSettings(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 15:
 			a.cycleBrowser(-1)
 		case 16:
+		case 17:
 		default:
 			if a.settingValue(realIdx) {
 				a.toggleSetting(realIdx)
@@ -404,6 +441,9 @@ var (
 func (a App) renderSettings() string {
 	if a.showColorEditor {
 		return a.renderColorEditor()
+	}
+	if a.showDiscordSetup {
+		return a.renderDiscordSetup()
 	}
 
 	boxW := min(max(a.width*2/3, 50), a.width-2)
@@ -439,8 +479,14 @@ func (a App) renderSettings() string {
 	for vi := scroll; vi < end; vi++ {
 		realIdx := filtered[vi]
 		opt := settingsOptions[realIdx]
+		name := opt.name
 		var toggle string
 		switch realIdx {
+		case 17:
+			toggle = actionStyle.Render("[>>>]")
+			if a.discordSetUp() {
+				name = "Change Discord App ID"
+			}
 		case 2:
 			if !a.loopTrack {
 				toggle = settingsOffStyle.Render("[OFF]")
@@ -467,7 +513,7 @@ func (a App) renderSettings() string {
 				toggle = settingsOffStyle.Render("[OFF]")
 			}
 		}
-		line := fmt.Sprintf("  %s  %-14s %s", toggle, opt.name, descStyle.Render(opt.desc))
+		line := fmt.Sprintf("  %s  %-14s %s", toggle, name, descStyle.Render(opt.desc))
 		line = ansi.Truncate(line, innerW, "")
 		if vi == a.settingsCur {
 			line = settingsCurStyle.Render(line)
@@ -497,6 +543,113 @@ func (a App) renderSettings() string {
 		overlayTitleStyle.Render("Settings") + "\n\n" + b.String(),
 	)
 	return box
+}
+
+// openDiscordSetup enters the Discord setup sub-view, prefilling the input with
+// the current app ID (empty on first setup).
+func (a *App) openDiscordSetup() {
+	a.showDiscordSetup = true
+	a.discordSetupConfirm = false
+	a.discordSetupInp.SetValue(a.discordAppID)
+	a.discordSetupInp.CursorEnd()
+	a.discordSetupInp.Focus()
+}
+
+// updateDiscordSetup handles keys in the Discord setup sub-view.
+func (a App) updateDiscordSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// "Discord RPC Set up!" confirmation dialog — any Enter/Esc dismisses it.
+	if a.discordSetupConfirm {
+		switch {
+		case key.Matches(msg, keys.Quit) && msg.String() == "ctrl+c":
+			a.quit()
+			return a, tea.Quit
+		case key.Matches(msg, keys.Enter), key.Matches(msg, keys.Escape):
+			a.discordSetupConfirm = false
+			a.showDiscordSetup = false
+			return a, nil
+		}
+		return a, nil
+	}
+
+	switch {
+	case key.Matches(msg, keys.Quit) && msg.String() == "ctrl+c":
+		a.quit()
+		return a, tea.Quit
+	case key.Matches(msg, keys.Enter):
+		val := strings.TrimSpace(a.discordSetupInp.Value())
+		if val == "" {
+			return a, nil
+		}
+		wasSetUp := a.discordSetUp()
+		a.discordAppID = val
+		a.discordSetupInp.Blur()
+		if a.discord != nil {
+			a.discord.SetAppID(val)
+		}
+		// On first setup, Rich Presence and the button default to on.
+		if !wasSetUp {
+			a.discordRPC = true
+			a.discordButton = true
+			if a.discord != nil {
+				a.discord.SetEnabled(true)
+				a.discord.SetShowButton(true)
+			}
+		}
+		a.saveSession()
+		a.discordSetupConfirm = true
+		return a, nil
+	case key.Matches(msg, keys.Escape):
+		a.discordSetupInp.Blur()
+		a.showDiscordSetup = false
+		return a, nil
+	default:
+		var cmd tea.Cmd
+		a.discordSetupInp, cmd = a.discordSetupInp.Update(msg)
+		return a, cmd
+	}
+}
+
+// renderDiscordSetup renders the Discord setup tutorial + app ID input.
+func (a App) renderDiscordSetup() string {
+	boxW := min(max(a.width*2/3, 50), a.width-2)
+
+	if a.discordSetupConfirm {
+		okStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Bold(true)
+		body := okStyle.Render("Discord RPC Set up!") + "\n\n" +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render("  Enter = OK")
+		return overlayBorderStyle.Width(boxW).Render(
+			overlayTitleStyle.Render("Discord RPC") + "\n\n" + body,
+		)
+	}
+
+	innerW := boxW - 6
+	if innerW < 20 {
+		innerW = 20
+	}
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	stepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
+
+	steps := []string{
+		"1. Open " + stepStyle.Render("https://discord.com/developers/applications"),
+		"2. Click " + stepStyle.Render("New Application") + ", name it (e.g. \"vimyt\"),",
+		"   and create it. The name shows as \"Listening to <name>\".",
+		"3. Open the app and copy its " + stepStyle.Render("Application ID"),
+		"   (General Information tab).",
+		"4. In Discord, enable " + stepStyle.Render("Settings > Activity Privacy >"),
+		"   " + stepStyle.Render("Share your detected activities") + ".",
+		"5. Paste the Application ID below and press Enter.",
+	}
+
+	var b strings.Builder
+	for _, s := range steps {
+		b.WriteString("  " + ansi.Truncate(s, innerW, "") + "\n")
+	}
+	b.WriteString("\n  " + a.discordSetupInp.View() + "\n")
+	b.WriteString("\n" + ansi.Truncate(descStyle.Render("  Enter = save  Esc = cancel"), innerW, ""))
+
+	return overlayBorderStyle.Width(boxW).Render(
+		overlayTitleStyle.Render("Set up Discord RPC") + "\n\n" + b.String(),
+	)
 }
 
 // updateColorEditor handles keys in the color editor sub-view.

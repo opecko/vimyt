@@ -8,6 +8,7 @@ type Track struct {
 	ID           string
 	Title        string
 	Artist       string
+	Album        string
 	Duration     time.Duration
 	StreamURL    string
 	ThumbnailURL string

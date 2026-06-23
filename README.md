@@ -115,6 +115,31 @@ Press `S` to open settings:
 - Show/Hide History / Radio History / Artists
 - YT Auth -- browser cookie auth (Firefox, Chrome, Chromium, Brave, Edge) for private playlists
 - Import Playlist by URL
+- Discord Rich Presence -- show the current track as a "Listening to ..." status
+
+## Discord Rich Presence
+
+vimyt can publish the currently playing track to Discord as a "Listening to ..."
+status, with title, artist, album art, a progress bar, and an optional "Listen
+on YT Music" button. It talks to a running Discord client over its local IPC
+socket, so nothing extra needs to be installed.
+
+Because Discord ties the activity name to an application, you supply your own
+application ID the first time:
+
+1. In settings (`S`), select **Set up Discord RPC**.
+2. Follow the on-screen steps: create an application at
+   [discord.com/developers/applications](https://discord.com/developers/applications),
+   copy its **Application ID**, and enable **Settings > Activity Privacy >
+   Share your detected activities** in Discord.
+3. Paste the Application ID and press Enter.
+
+The application's name is what shows up as "Listening to <name>", so name it
+whatever you want the status to read (e.g. "vimyt"). Once set up, Rich Presence
+and the listen button are enabled by default and can be toggled in settings; the
+setup entry becomes **Change Discord App ID**.
+
+Set `VIMYT_DISCORD_APP_ID` to override the configured ID from the environment.
 
 ## Data Storage
 
