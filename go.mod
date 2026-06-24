@@ -1,4 +1,4 @@
-module github.com/Sadoaz/vimyt
+module github.com/opecko/vimyt
 
 go 1.25.0
 
