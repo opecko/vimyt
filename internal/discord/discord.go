@@ -31,6 +31,11 @@ const (
 // activityListening is the Discord activity type for "Listening to …".
 const activityListening = 2
 
+const (
+	frameMaxBytes = 1 << 20
+	ioTimeout     = 5 * time.Second
+)
+
 type timestamps struct {
 	Start int64 `json:"start,omitempty"`
 	End   int64 `json:"end,omitempty"`
@@ -39,6 +44,7 @@ type timestamps struct {
 type assets struct {
 	LargeImage string `json:"large_image,omitempty"`
 	LargeText  string `json:"large_text,omitempty"`
+	LargeURL   string `json:"large_url,omitempty"`
 }
 
 type button struct {
@@ -60,9 +66,8 @@ type Server struct {
 	player model.PlayerInterface
 	appID  string
 
-	mu         sync.Mutex
-	enabled    bool
-	showButton bool
+	mu      sync.Mutex
+	enabled bool
 
 	conn        net.Conn
 	lastConnTry time.Time
@@ -80,18 +85,17 @@ type Server struct {
 // server stays inert; the TUI sets it via SetAppID once the user has set up
 // their own Discord application. The VIMYT_DISCORD_APP_ID environment variable,
 // if set, overrides whatever the TUI provides.
-func New(player model.PlayerInterface, enabled, showButton bool, appID string) *Server {
+func New(player model.PlayerInterface, enabled bool, appID string) *Server {
 	if env := os.Getenv("VIMYT_DISCORD_APP_ID"); env != "" {
 		appID = env
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{
-		player:     player,
-		appID:      appID,
-		enabled:    enabled,
-		showButton: showButton,
-		quit:       cancel,
-		quitDone:   make(chan struct{}),
+		player:   player,
+		appID:    appID,
+		enabled:  enabled,
+		quit:     cancel,
+		quitDone: make(chan struct{}),
 	}
 	go s.run(ctx)
 	return s
@@ -122,14 +126,6 @@ func (s *Server) SetAppID(id string) {
 		}
 		s.lastSig = ""
 	}
-	s.mu.Unlock()
-}
-
-// SetShowButton toggles the "Listen on YT Music" button.
-func (s *Server) SetShowButton(on bool) {
-	s.mu.Lock()
-	s.showButton = on
-	s.lastSig = "" // force a resend so the button appears/disappears now
 	s.mu.Unlock()
 }
 
@@ -234,12 +230,15 @@ func (s *Server) activityFor(st model.PlayerStatus) *activity {
 	}
 
 	art := artURL(t)
-	if art != "" || t.Album != "" {
+	if art != "" || t.Album != "" || t.ID != "" {
 		largeText := t.Album
+		if largeText == "" && t.ID != "" {
+			largeText = "Open on YT Music"
+		}
 		if largeText == "" {
 			largeText = t.Title
 		}
-		a.Assets = &assets{LargeImage: art, LargeText: largeText}
+		a.Assets = &assets{LargeImage: art, LargeText: largeText, LargeURL: trackURL(t)}
 	}
 
 	// Progress bar: only while actually playing and with a known duration.
@@ -252,10 +251,10 @@ func (s *Server) activityFor(st model.PlayerStatus) *activity {
 		}
 	}
 
-	if s.showButton && t.ID != "" {
+	if t.ID != "" {
 		a.Buttons = []button{{
-			Label: "Listen on YT Music",
-			URL:   "https://music.youtube.com/watch?v=" + t.ID,
+			Label: "Open on YT Music",
+			URL:   trackURL(t),
 		}}
 	}
 	return a
@@ -264,7 +263,11 @@ func (s *Server) activityFor(st model.PlayerStatus) *activity {
 // signature returns a string that changes only when a resend is warranted.
 func (s *Server) signature(a *activity) string {
 	hasBar := a.Timestamps != nil
-	return fmt.Sprintf("%s|%s|%t|%t", a.Details, a.State, hasBar, len(a.Buttons) > 0)
+	buttonSig := ""
+	for _, b := range a.Buttons {
+		buttonSig += "|" + b.Label + ":" + b.URL
+	}
+	return fmt.Sprintf("%s|%s|%t|%s", a.Details, a.State, hasBar, buttonSig)
 }
 
 func artURL(t *model.Track) string {
@@ -275,6 +278,13 @@ func artURL(t *model.Track) string {
 		return fmt.Sprintf("https://img.youtube.com/vi/%s/hqdefault.jpg", t.ID)
 	}
 	return ""
+}
+
+func trackURL(t *model.Track) string {
+	if t.ID == "" {
+		return ""
+	}
+	return "https://music.youtube.com/watch?v=" + t.ID
 }
 
 // --- IPC plumbing ---
@@ -355,6 +365,12 @@ func dialDiscord() (net.Conn, error) {
 }
 
 func writeFrame(c net.Conn, op uint32, payload []byte) error {
+	if len(payload) > frameMaxBytes {
+		return errors.New("discord ipc frame too large")
+	}
+	if err := c.SetWriteDeadline(time.Now().Add(ioTimeout)); err != nil {
+		return err
+	}
 	buf := make([]byte, 8+len(payload))
 	binary.LittleEndian.PutUint32(buf[0:4], op)
 	binary.LittleEndian.PutUint32(buf[4:8], uint32(len(payload)))
@@ -364,12 +380,18 @@ func writeFrame(c net.Conn, op uint32, payload []byte) error {
 }
 
 func readFrame(c net.Conn) (uint32, []byte, error) {
+	if err := c.SetReadDeadline(time.Now().Add(ioTimeout)); err != nil {
+		return 0, nil, err
+	}
 	header := make([]byte, 8)
 	if _, err := io.ReadFull(c, header); err != nil {
 		return 0, nil, err
 	}
 	op := binary.LittleEndian.Uint32(header[0:4])
 	ln := binary.LittleEndian.Uint32(header[4:8])
+	if ln > frameMaxBytes {
+		return 0, nil, errors.New("discord ipc frame too large")
+	}
 	data := make([]byte, ln)
 	if _, err := io.ReadFull(c, data); err != nil {
 		return 0, nil, err

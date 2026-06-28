@@ -32,7 +32,7 @@ func main() {
 
 	// Discord Rich Presence. Starts disabled; the TUI enables it from the
 	// persisted session settings. Safe no-op if Discord is not running.
-	dc := discord.New(p, false, false, "")
+	dc := discord.New(p, false, "")
 	defer dc.Close()
 
 	plStore, err := model.NewPlaylistStore()

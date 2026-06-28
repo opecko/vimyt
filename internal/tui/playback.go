@@ -243,7 +243,6 @@ func (a *App) saveSession() {
 		Theme:             a.theme.ToMap(),
 		DiscordAppID:      a.discordAppID,
 		DiscordRPC:        a.discordRPC,
-		DiscordButton:     a.discordButton,
 	}
 	if a.playlist.radioActive {
 		// Don't save radio as detail level — go back to list

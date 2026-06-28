@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -33,15 +34,16 @@ var settingsOptions = []struct {
 	{"Show Radio", "Show radio history panel below play history"},       // 12
 	{"Show Artists", "Show artists panel"},                              // 13
 	{"Colors", "Customize TUI colors"},                                  // 14
-	{"YT Auth", "Use browser cookies to access your private playlists"},           // 15
-	{"Import", "Import playlist from YouTube URL"},                                // 16
-	{"Set up Discord RPC", "Configure your own Discord application ID to enable Rich Presence"}, // 17 (name overridden once set up)
-	{"Discord Rich Presence", "Show current track as a Discord listening status"},                // 18
-	{"Show Listen on YTMusic Button In RPC", "Add a button linking to the track on music.youtube.com"}, // 19
+	{"YT Auth", "Use browser cookies to access your private playlists"}, // 15
+	{"Import", "Import playlist from YouTube URL"},                      // 16
+	{"Discord App", "Configure your Discord application ID"},            // 17 (name overridden once set up)
+	{"Discord RPC", "Show current track as a Discord listening status"}, // 18
 }
 
 // discordSetUp reports whether the user has configured a Discord application ID.
-func (a *App) discordSetUp() bool { return a.discordAppID != "" }
+func (a *App) discordSetUp() bool {
+	return a.discordAppID != "" || os.Getenv("VIMYT_DISCORD_APP_ID") != ""
+}
 
 // browserOptions is the cycle for the Auth Browser setting.
 var browserOptions = []string{"", "firefox", "chrome", "chromium", "brave", "edge"}
@@ -86,8 +88,6 @@ func (a *App) settingValue(idx int) bool {
 		return false // Set up / Change Discord App ID — action, not a toggle
 	case 18:
 		return a.discordRPC
-	case 19:
-		return a.discordButton
 	}
 	return false
 }
@@ -168,11 +168,6 @@ func (a *App) toggleSetting(idx int) {
 		if a.discord != nil {
 			a.discord.SetEnabled(a.discordRPC)
 		}
-	case 19:
-		a.discordButton = !a.discordButton
-		if a.discord != nil {
-			a.discord.SetShowButton(a.discordButton)
-		}
 	}
 }
 
@@ -200,13 +195,13 @@ func (a *App) cycleBrowser(dir int) {
 
 // settingsFilteredIndices returns the indices of settings matching the filter.
 func (a *App) settingsFilteredIndices() []int {
-	// The Discord RPC toggles (18, 19) stay hidden until the user has set up
+	// The Discord RPC toggle stays hidden until the user has set up
 	// their own application ID.
 	setUp := a.discordSetUp()
 	var indices []int
 	filter := strings.ToLower(a.settingsFilter)
 	for i, opt := range settingsOptions {
-		if (i == 18 || i == 19) && !setUp {
+		if i == 18 && !setUp {
 			continue
 		}
 		if a.settingsFilter != "" &&
@@ -589,10 +584,8 @@ func (a App) updateDiscordSetup(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// On first setup, Rich Presence and the button default to on.
 		if !wasSetUp {
 			a.discordRPC = true
-			a.discordButton = true
 			if a.discord != nil {
 				a.discord.SetEnabled(true)
-				a.discord.SetShowButton(true)
 			}
 		}
 		a.saveSession()

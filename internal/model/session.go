@@ -52,7 +52,6 @@ type Session struct {
 	Theme             map[string]string `json:"theme,omitempty"` // custom color theme overrides
 	DiscordAppID      string            `json:"discord_app_id"`  // user's Discord application ID (empty = RPC not set up)
 	DiscordRPC        bool              `json:"discord_rpc"`     // publish Discord Rich Presence
-	DiscordButton     bool              `json:"discord_button"`  // show "Listen on YT Music" button in RPC
 }
 
 func sessionPath() (string, error) {

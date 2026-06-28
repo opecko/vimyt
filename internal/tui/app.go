@@ -120,7 +120,6 @@ type App struct {
 	cookieBrowser       string          // browser for yt-dlp cookie auth ("" = off)
 	discordAppID        string          // user's Discord application ID ("" = RPC not set up)
 	discordRPC          bool            // publish Discord Rich Presence
-	discordButton       bool            // show "Listen on YT Music" button in RPC
 	discord             *discord.Server // Discord Rich Presence server (nil if disabled)
 	showDiscordSetup    bool            // Discord setup sub-view active
 	discordSetupInp     textinput.Model // text input for the Discord app ID
@@ -417,7 +416,6 @@ func New(plStore *model.PlaylistStore, p *player.Player, dc *discord.Server) App
 		theme:                ThemeFromMap(sess.Theme),
 		discordAppID:         sess.DiscordAppID,
 		discordRPC:           sess.DiscordRPC,
-		discordButton:        sess.DiscordButton,
 		discord:              dc,
 		discordSetupInp:      dsi,
 		prefetchNextIdx:      -1,
@@ -425,7 +423,6 @@ func New(plStore *model.PlaylistStore, p *player.Player, dc *discord.Server) App
 	// Apply persisted Discord Rich Presence settings to the server.
 	if dc != nil {
 		dc.SetAppID(app.discordAppID)
-		dc.SetShowButton(app.discordButton)
 		dc.SetEnabled(app.discordRPC)
 	}
 	// Apply cookie browser setting to youtube package
